@@ -1,20 +1,27 @@
 from __future__ import annotations
 
-import json
 import random
 import re
 
 from .base import ChatProvider, ProviderResponse
 
-# Matches the "Alive players: PlayerA, PlayerB, ..." line the prompt builder emits,
-# so the mock can pick a plausible-looking random target instead of returning garbage.
-_ALIVE_RE = re.compile(r"Alive players:\s*(.+)")
-_ACTION_KEYS = ("vote", "target", "save", "investigate")
+# Matches the "Respond with exactly one of: A, B, C" line ask_choice() appends to its
+# prompt (see interpreter.py's _bi_ask_choice), so the mock can pick a legal option
+# instead of free text that would fail every game's option-matching.
+_OPTIONS_RE = re.compile(r"Respond with exactly one of:\s*(.+)")
+
+_FREE_TEXT_POOL = [
+    "I'm not sure yet, let's see how this plays out.",
+    "Something about this doesn't add up to me.",
+    "I'll go along with the group for now.",
+    "Let's hear more before anyone decides anything.",
+]
 
 
 class MockProvider(ChatProvider):
-    """No API key required. Picks legal-looking random actions so the engine can be
-    exercised end-to-end (and used as a random-play baseline row on the leaderboard).
+    """No API key required. Picks a legal option when the prompt names one (so
+    ask_choice() always gets a parseable answer), otherwise returns a generic line --
+    lets a SocialLang program run end-to-end as a random-play baseline.
     """
 
     def complete(
@@ -25,28 +32,9 @@ class MockProvider(ChatProvider):
         max_tokens: int = 500,
         timeout: int = 60,
     ) -> ProviderResponse:
-        names: list[str] = []
-        match = _ALIVE_RE.search(user_prompt)
+        match = _OPTIONS_RE.search(user_prompt)
         if match:
-            names = [n.strip() for n in match.group(1).split(",") if n.strip()]
-
-        pool = [
-            "I'm not sure who to trust yet.",
-            "Something feels off about the last vote.",
-            "Let's hear more before deciding.",
-            "I don't have a strong read yet.",
-        ]
-        payload: dict = {"thought": "random baseline move"}
-        payload["messages"] = random.sample(pool, k=random.randint(1, 2))
-        payload["message"] = payload["messages"][0]  # legacy single-message fallback path
-        payload["speech"] = "Mock baseline defense: nothing concrete to add, just playing it safe."
-        combined = system_prompt + user_prompt
-        for key in _ACTION_KEYS:
-            if f'"{key}"' in combined and names:
-                payload[key] = random.choice(names)
-        if '"summary"' in combined:
-            payload["summary"] = "Mock digest: no strong consensus emerged."
-        if '"action"' in combined:
-            payload["action"] = random.choice(["speak", "think", "pass"])
-
-        return ProviderResponse(text=json.dumps(payload))
+            options = [o.strip() for o in match.group(1).split(",") if o.strip()]
+            if options:
+                return ProviderResponse(text=random.choice(options))
+        return ProviderResponse(text=random.choice(_FREE_TEXT_POOL))

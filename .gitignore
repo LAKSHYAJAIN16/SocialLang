@@ -2,8 +2,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-results/games/
-results/summary.jsonl
+results/
+results_test/
 logs/
 .venv/
 venv/

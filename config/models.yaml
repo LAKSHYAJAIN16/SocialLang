@@ -1,0 +1,160 @@
+# Roster of chatbot "players" the simulator can draw from.
+# Edit freely: add/remove models, fix model_id strings, disable ones you don't
+# have keys for. Nothing else in the codebase needs to change.
+#
+# provider: which HTTP adapter to use (anthropic, google, openai_compat, mock)
+# vendor:   which company the model actually comes from. The tournament sampler
+#           uses this to avoid ever putting two models from the same vendor in
+#           the same game (e.g. two Claude models, or two OpenAI models).
+# open_source: true for openly-released weights (Llama, DeepSeek, Qwen, Mixtral, ...)
+#
+# For openai_compat, base_url is the provider's OpenAI-compatible chat
+# completions root (no trailing /chat/completions).
+
+models:
+  - key: claude-opus-5
+    display_name: "Claude Opus 5"
+    provider: anthropic
+    vendor: anthropic
+    model_id: claude-opus-5
+    api_key_env: ANTHROPIC_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: claude-sonnet-5
+    display_name: "Claude Sonnet 5"
+    provider: anthropic
+    vendor: anthropic
+    model_id: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: claude-haiku-4-5
+    display_name: "Claude Haiku 4.5"
+    provider: anthropic
+    vendor: anthropic
+    model_id: claude-haiku-4-5-20251001
+    api_key_env: ANTHROPIC_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: gpt-5.5
+    display_name: "GPT-5.5"
+    provider: openai_compat
+    vendor: openai
+    model_id: gpt-5.5
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: gpt-5.4-mini
+    display_name: "GPT-5.4 Mini"
+    provider: openai_compat
+    vendor: openai
+    model_id: gpt-5.4-mini
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: gemini-pro-latest
+    display_name: "Gemini Pro"
+    provider: google
+    vendor: google
+    model_id: gemini-pro-latest
+    api_key_env: GEMINI_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: gemini-3.6-flash
+    display_name: "Gemini 3.6 Flash"
+    provider: google
+    vendor: google
+    model_id: gemini-3.6-flash
+    api_key_env: GEMINI_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: grok-4
+    display_name: "Grok 4"
+    provider: openai_compat
+    vendor: xai
+    model_id: grok-4
+    base_url: https://api.x.ai/v1
+    api_key_env: XAI_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: mistral-large
+    display_name: "Mistral Large"
+    provider: openai_compat
+    vendor: mistral
+    model_id: mistral-large-latest
+    base_url: https://api.mistral.ai/v1
+    api_key_env: MISTRAL_API_KEY
+    open_source: false
+    enabled: true
+
+  - key: deepseek-chat
+    display_name: "DeepSeek Chat"
+    provider: openai_compat
+    vendor: deepseek
+    model_id: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    open_source: true
+    enabled: true
+
+  - key: gpt-oss-120b
+    display_name: "GPT-OSS 120B (Groq)"
+    provider: openai_compat
+    vendor: openai
+    model_id: openai/gpt-oss-120b
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    open_source: true
+    enabled: true
+
+  - key: command-a
+    display_name: "Cohere Command A"
+    provider: openai_compat
+    vendor: cohere
+    model_id: command-a-03-2025
+    base_url: https://api.cohere.com/compatibility/v1
+    api_key_env: COHERE_API_KEY
+    open_source: false
+    enabled: true
+
+  # --- open-weight models, hosted via Together AI (one key unlocks all of these) ---
+
+  - key: qwen-2.5-72b
+    display_name: "Qwen 2.5 72B Instruct"
+    provider: openai_compat
+    vendor: alibaba
+    model_id: Qwen/Qwen2.5-72B-Instruct-Turbo
+    base_url: https://api.together.xyz/v1
+    api_key_env: TOGETHER_API_KEY
+    open_source: true
+    enabled: true
+
+  - key: mixtral-8x22b
+    display_name: "Mixtral 8x22B Instruct"
+    provider: openai_compat
+    vendor: mistral
+    model_id: mistralai/Mixtral-8x22B-Instruct-v0.1
+    base_url: https://api.together.xyz/v1
+    api_key_env: TOGETHER_API_KEY
+    open_source: true
+    enabled: true
+
+  # Always available, no API key needed. Used only for --mock-only test runs --
+  # kept disabled here so it never gets sampled into a real tournament game.
+  - key: mock-random
+    display_name: "Mock (random baseline)"
+    provider: mock
+    vendor: mock
+    model_id: mock-random
+    open_source: true
+    enabled: false

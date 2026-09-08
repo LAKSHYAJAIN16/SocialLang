@@ -1,220 +1,197 @@
 # SocialLang design doc
 
-## Why this repo exists
+## What this is
 
-[MafiaSim](https://github.com/LAKSHYAJAIN16/LLM-mafia) runs one specific game (Mafia) with the
-rules hardcoded into Python classes: `Role` is a 4-value enum, `engine.py` knows exactly what a
-night phase and a day phase are, `prompts.py` has Mafia-specific sections baked into the prompt
-builder. That's the right call for a single-game research project, but it means adding a second
-game means rewriting the engine.
+SocialLang is a real programming language — its own lexer, parser, and tree-walking
+interpreter (`sociallang/lang/`) — for defining social games and running them with LLM
+agents. A `.sl` program declares a population of agents, the roles they can hold, the
+phases the game moves through, and the rules of each phase as actual code: variables,
+loops, conditionals, functions. There's no host language required to add a new game —
+write a `.sl` file and run it.
 
-SocialLang is a declarative schema for *defining* a social/game setting, plus a generic engine
-that runs any game satisfying that schema by driving LLM agents through it — instead of one
-engine per game. MafiaSim's LLM plumbing (`providers/`: the `ChatProvider` abstraction,
-`ModelSpec`/roster loading, cost tracking, retry logic) is completely game-agnostic already and
-is ported into this repo verbatim (`sociallang/providers/`). What's new here is everything that
-was previously hardcoded per-game: roles, phases, actions, visibility, win conditions.
+**This supersedes an earlier draft of this doc**, which specified a declarative YAML
+config schema instead. That's the wrong shape for "custom rules" — a config file can't
+express "if the accused player has been silent for 2 rounds, skip the vote" without the
+engine growing a bespoke feature for every such rule. A real language with control flow
+doesn't have that ceiling: the rule is just code.
 
-**Scope decision (per discussion):** this is a *config layer*, not a new parser/grammar. A
-"SocialLang program" is a YAML document validated against a schema — no new syntax to learn, no
-lexer/interpreter to build and debug. "Real DSL with its own grammar" was considered and rejected
-for now: it's a much bigger build (parser, static analysis, error messages with line numbers) for
-expressiveness this project doesn't need yet. If the YAML schema turns out to be too limited
-(e.g. win conditions that need real expressiveness, not just a small predicate language), a real
-grammar is a natural v2 — this doc's model doesn't change, just the surface syntax.
+`sociallang/providers/` is unchanged from that earlier version — MafiaSim's LLM provider
+plumbing (`ChatProvider` abstraction, all four adapters, roster loading, retry logic),
+ported as-is because it's already game-agnostic.
 
-## Core abstraction
+## Language overview
 
-Every game definition has five parts:
-
-1. **Roles** — who can be assigned to a seat: a name, a team, what actions the role can take and
-   in which phases, and what it can privately see.
-2. **Phases** — the ordered (possibly cyclic) sequence of stages a game moves through, each
-   naming which roles act, which action types are legal, and whether actions within the phase
-   resolve simultaneously or in sequence.
-3. **Actions** — the vocabulary of things a seat can do: speak publicly, vote, send a private
-   message to a subset of seats, or invoke a named role ability against a target.
-4. **Visibility** — who learns what, and when: this is what makes a hidden-role game hidden (mafia
-   see each other; town doesn't see roles at all) as opposed to a fully-observed game (everyone
-   sees every action immediately).
-5. **Win conditions** — a per-team predicate over game state (alive counts, elapsed rounds,
-   accumulated scores, ...), checked after every phase resolves.
-
-The generic engine's job is: load a game definition, deal roles to seats, and loop over phases,
-at each step building a prompt for whichever seat(s) must act (parameterized by that role's
-declared visibility — this is the direct generalization of what `mafia_sim/game/prompts.py`
-already does by hand for Mafia specifically), collecting and validating their action against the
-phase's legal action list (generalizing `mafia_sim/game/parsing.py`), applying resolution rules,
-and checking win conditions.
-
-## Schema reference
-
-```yaml
-name: string                       # game identifier
-teams: [string, ...]               # every team a role can belong to
-
-roles:
-  <role_name>:
-    team: string                   # must be one of `teams`
-    count: int | "remainder"       # exact seats, or "fill whatever's left"
-    sees:                          # what this role privately knows, beyond public state
-      - own_role                   # always implicit, listed for clarity
-      - teammates                  # other seats sharing this role's team (e.g. mafia see mafia)
-      - <ability_name>_results     # e.g. "investigate_results" for a detective-like role
-    actions:                       # ability names this role may invoke (beyond phase defaults)
-      - <action_name>
-
-phases:
-  - name: string
-    order: sequential | simultaneous   # do actors within this phase see each other's actions
-                                        # as they happen (sequential) or only after all are in
-                                        # (simultaneous)?
-    actors: all | <team_name> | <role_name>   # who is prompted to act this phase
-    legal_actions: [speak, vote, whisper, use_ability, pass]
-    resolution:                    # only meaningful when legal_actions includes use_ability
-                                    # or vote; priority order for simultaneous same-phase effects
-      - <action_name or role_name>
-    repeats_until: <win_conditions_checked> | <n_rounds>
-
-win_conditions:
-  - team: string
-    when: <predicate>              # small expression language, see below
-
-# predicate language: comparisons over built-in state vars, joined with and/or
-#   alive(<team_or_role>)          -> count of living seats on that team/role
-#   eliminated(<team_or_role>)     -> count removed from play
-#   round                          -> current phase-cycle count
-#   score(<team_or_role>)          -> accumulated numeric score, for scoring-based games
-# e.g.:  "alive(mafia) >= alive(town)"
-#        "eliminated(mafia) == 0 and round > 10"
 ```
+sim Mafia {
+  agents: 6..10                       // population size drawn from this range at start
 
-This covers what MafiaSim's engine currently does by hand. It deliberately does *not* yet cover:
-persistent per-seat numeric resources beyond `score` (e.g. an economy/currency), actions with
-continuous/structured parameters beyond "pick a target seat" (e.g. "offer a trade of X for Y"),
-or conditional role abilities that change mid-game. Those are the concrete cases where "config
-layer" would start to strain and a real grammar would earn its cost — worth watching for once a
-second or third game is built, not solving speculatively now.
+  memory recent(n) {                  // a custom memory pattern, written in SocialLang
+    return last(events, n)            // itself -- see "Memory patterns" below
+  }
 
-## Worked example 1: Mafia, expressed in SocialLang
-
-This is what `mafia_sim/game/roles.py` + `engine.py` currently hardcode, rewritten as data:
-
-```yaml
-name: mafia
-teams: [mafia, town]
-
-roles:
-  mafia:
-    team: mafia
+  role Mafia {
+    team: "mafia"
+    memory: recent(20)                // mafia only see their last 20 visible events
+    sees: teammates                   // told who else shares this role
     count: 2
-    sees: [own_role, teammates]
-    actions: [kill]
-  detective:
-    team: town
-    count: 1
-    sees: [own_role, investigate_results]
-    actions: [investigate]
-  doctor:
-    team: town
-    count: 1
-    sees: [own_role]
-    actions: [protect]
-  villager:
-    team: town
-    count: remainder
-    sees: [own_role]
-    actions: []
+  }
 
-phases:
-  - name: night
-    order: simultaneous
-    actors: all               # each acting role only sees the prompt matching its own actions
-    legal_actions: [use_ability, whisper]   # whisper == mafia's private night chat
-    resolution: [protect, kill, investigate]   # doctor's save must land before the kill resolves
-  - name: day
-    order: sequential
-    actors: all
-    legal_actions: [speak, vote]
-    repeats_until: win_conditions_checked
+  role Villager {
+    team: "town"
+    memory: full_history              // built-in: every visible event, no windowing
+    sees: none
+    count: remainder                  // fills whatever's left of the drawn population
+  }
 
-win_conditions:
-  - team: mafia
-    when: "alive(mafia) >= alive(town)"
-  - team: town
-    when: "alive(mafia) == 0"
+  phase Night {
+    let targets = alive()
+    let votes = {}
+    for m in with_role("Mafia") {
+      if m.alive {
+        votes[m] = ask_choice(m, "Who should the mafia eliminate tonight?", targets)
+      }
+    }
+    let victim = tally(votes)
+    if victim != null {
+      eliminate(victim, "killed by the mafia")
+    }
+  }
+
+  win_condition {
+    let mafia_left = 0
+    let town_left = 0
+    for a in alive() {
+      if a.team == "mafia" { mafia_left = mafia_left + 1 } else { town_left = town_left + 1 }
+    }
+    if mafia_left == 0 { return "town" }
+    if mafia_left >= town_left { return "mafia" }
+  }
+
+  loop {
+    run Night
+    let winner = check_win()
+    if winner != null { return winner }
+  }
+}
 ```
 
-`games/mafia.yaml` in this repo is exactly this.
+The full worked examples are `games/mafia.sl` (a complete Mafia implementation) and
+`games/trust_game.sl` (a structurally different game — no hidden roles, no elimination,
+just repeated cooperate/defect rounds with a round-count win condition) — proof the
+language isn't accidentally Mafia-shaped.
 
-## Worked example 2: an iterated trust game, to stress-test generality
+### Grammar
 
-Mafia is a hidden-role, team-elimination game. To check the schema isn't just "Mafia with the
-names changed," here's a structurally different game: no hidden roles, no elimination, a fixed
-population that repeatedly chooses to cooperate or defect, winning by accumulated score rather
-than team survival — closer to an iterated Prisoner's Dilemma / public-goods game with
-reputation, still legible as a "social setting" simulated by LLM agents:
+Top-level: a program is exactly one `sim <Name> { ... }` block containing, in any order:
 
-```yaml
-name: trust_game
-teams: [player]                    # everyone's on the same "team" -- there's no hidden alignment
+- `agents: <n>` or `agents: <lo>..<hi>` — population size (fixed or a range, redrawn each run)
+- `role <Name> { team: "..", memory: <pattern>(<args>), sees: teammates|none, count: <n>|remainder }`
+  — at most one role may use `count: remainder`
+- `memory <name>(<params>) { <statements> }` — a custom memory pattern (see below)
+- `fn <name>(<params>) { <statements> }` — an ordinary function
+- `phase <name> { <statements> }` — a named block of game logic, invoked with `run <name>`
+- `win_condition { <statements> }` — evaluated on demand via the `check_win()` builtin;
+  `return <value>` reports a winner, falling off the end (or `return` with no value)
+  means "no winner yet"
+- `loop { <statements> }` — the simulation's main loop, re-executed once per round (up to
+  a safety cap); `run <phase>` invokes a phase inline, and `return <value>` anywhere in
+  the loop (or in a phase it calls) ends the simulation with that value as the winner
 
-roles:
-  player:
-    team: player
-    count: remainder
-    sees: [own_role, public_history]   # everyone sees every past round's outcomes -- no
-                                        # hidden information at all, unlike Mafia
-    actions: [cooperate, defect]
+Statements: `let`, plain assignment (`x = ...`, `d[k] = ...`), `if`/`else if`/`else`,
+`while`, `for x in <expr>`, `return`, `break`, `run <phase>`, and bare expression calls.
+Expressions: numbers, strings, `true`/`false`/`null`, list `[...]` and dict `{k: v}`
+literals, `and`/`or`/`not`, comparisons, arithmetic, `.attr` access, `[index]`, and
+function calls with positional and `name=value` keyword arguments. `+` concatenates two
+strings or adds two numbers; concatenating a string with anything else needs an explicit
+`str(x)` first.
 
-phases:
-  - name: round
-    order: simultaneous               # both players choose blind to each other's current pick
-    actors: all
-    legal_actions: [use_ability]      # cooperate/defect are use_ability invocations, not votes
-    resolution: [cooperate, defect]   # order doesn't matter here, both apply at once
-    repeats_until: 20_rounds
+### Built-in functions
 
-win_conditions:
-  - team: player
-    when: "round > 20"                # game just ends; each player's own score is the outcome,
-                                       # there's no team to declare a winner -- ranking happens
-                                       # outside win_conditions, from each seat's final score
-```
+| Function | Does |
+|---|---|
+| `ask(agent, prompt, temperature=, max_tokens=)` | Calls the agent's model, returns its raw text reply |
+| `ask_choice(agent, prompt, options)` | Same, constrained to match one item of `options` |
+| `broadcast(text)` / `broadcast(agent, text)` | Publishes an event every agent can see |
+| `whisper(agents, text)` | Publishes an event only the given agents can see |
+| `remember(agent, text)` | Adds a private note to one agent's own memory |
+| `reflect(agent)` | Asks the agent to synthesize 1-3 insights from its retrieved memory (see below); returns them and also stores them as new, high-importance memories |
+| `alive()` | List of currently-alive agents |
+| `with_role(name)` | List of agents (alive or not) holding that role |
+| `team_of(agent)` | That agent's role's team string |
+| `eliminate(agent, cause=)` | Marks an agent dead and broadcasts it |
+| `tally(votes)` | Given a dict of agent → target, returns the majority target (ties broken randomly) |
+| `count(x)`, `last(list, n)`, `random_choice(list)`, `str(x)`, `print(x)` | Utility |
+| `check_win()` | Runs `win_condition` once, returns its result (or `null`) |
 
-`games/trust_game.yaml` in this repo is exactly this. Notice what had to flex to fit both games
-in one schema: `teams` can be a single team (no real "sides"), `sees` can be "everything, always"
-instead of role-gated, and a win condition can be a simple round-count instead of a
-team-elimination check. Nothing in the *shape* of the schema had to change — that's the signal
-the abstraction is at roughly the right level, not too narrow.
+### Roster and identity are not part of the language
 
-## What's ported vs. new
+A `sim` describes game *shape*: how many seats, what roles, what happens each phase.
+It doesn't say which LLMs fill those seats — that's a run-time concern. `sociallang run`
+loads a roster (`config/models.yaml`, MafiaSim's own format, reused as-is) and assigns
+one model per seat (`P1`, `P2`, ... — anonymized seat names, not model names, so the
+prompt an agent sees never leaks its own identity or another agent's).
 
-**Ported from MafiaSim as-is (`sociallang/providers/`):** `ChatProvider` abstraction, all four
-provider adapters (Anthropic/Google/OpenAI-compatible/mock), retry logic, `ModelSpec` + roster
-loading + vendor filtering. None of this is Mafia-specific; it was already a clean seam.
+## Memory patterns
 
-**New, not yet built:** the schema validator, the generic phase-loop engine (generalizing
-`game/engine.py`), the generic prompt builder (generalizing `game/prompts.py`'s per-role
-visibility logic to read `sees:` from the schema instead of having it hand-written per role), the
-generic action parser (generalizing `game/parsing.py`), and results logging generalized to not
-assume Mafia's specific log shapes (`public_log`/`mafia_log`/`vote_log` become one generic
-per-visibility-channel event log).
+Every role names a memory pattern (`memory: <name>(<args>)`), which controls what slice
+of the shared event log that role's agents see in their prompt each time they're
+`ask()`ed. Three are native (implemented in Python, for speed/correctness of the
+underlying math); anything else is looked up among the program's own `memory name(...) { }`
+blocks, which run as ordinary SocialLang functions receiving two implicit bindings —
+`events` (every event visible to this agent, in order) and `query` (the current prompt
+text) — plus whatever parameters the role passed. A custom pattern with the same name as
+a native one shadows it.
 
-## Open questions before building the engine
+- **`full_history`** — every visible event, unfiltered. The default when a role's memory
+  args are trivial.
+- **`recent(n)`** — the last `n` visible events. (Also demonstrated as a from-scratch
+  custom pattern in `games/mafia.sl`, to show the native version isn't privileged syntax
+  — a user pattern with the same name and same one-line body works identically.)
+- **`generative(k)`** — top-`k` retrieval by a recency + importance + relevance score,
+  modeled on the memory-stream retrieval in Park et al. 2023, *"Generative Agents:
+  Interactive Simulacra of Human Behavior"* (Stanford), https://arxiv.org/abs/2304.03442.
+  The paper scores each memory by exponential-decay recency, an LLM-rated 1-10
+  importance assigned at write time, and embedding cosine similarity to the current
+  query, then retrieves the top-k by weighted sum. This implementation (`sociallang/lang/memory.py`)
+  keeps that three-factor shape but swaps the two components that would need extra LLM
+  calls or an embedding index for cheap deterministic stand-ins: importance is a lexical
+  heuristic (density of game-stakes words + length) instead of an LLM rating, and
+  relevance is Jaccard token overlap instead of embedding similarity. Both are the
+  obvious place to plug in a real embedding provider and an importance-rating LLM call
+  later without changing the retrieval formula.
 
-- Predicate language for `win_conditions.when`: hand-roll a tiny parser for the handful of
-  operators above, or is that already "the DSL" in disguise and worth just committing to?
-- Does `resolution:` priority need per-action parameters (e.g. "doctor can't protect the same
-  seat two rounds running"), or is a strict priority order enough for the games actually planned?
-- Multi-round phases (`repeats_until: n_rounds` in the trust game) vs. condition-gated phases
-  (`repeats_until: win_conditions_checked` in Mafia's day phase) — same field, two different
-  meanings; worth splitting into two fields once a third game clarifies the actual pattern space.
+The paper's other major mechanism, **reflection** — periodically synthesizing
+higher-level insights from a batch of recent memories, then storing the insight back
+into the memory stream as a new, distinctively important memory — is the `reflect()`
+builtin: it retrieves an agent's most important/recent memories (via the same
+recency+importance+relevance scoring as `generative`), asks the agent's own model to
+state 1-3 conclusions, and writes each one back as a `reflection`-kind event with
+importance `0.9`. A script decides when to call it (e.g. once per day-phase) — this is a
+single-level simplification of the paper's hierarchical reflection tree, not a full
+port.
 
-## Next step
+## What's implemented vs. not
 
-Confirm this schema shape covers what you have in mind, then: (1) port Mafia itself onto this
-schema as the first real SocialLang game (validates the abstraction against a game that
-actually has to work, not just a sketch), (2) build the generic engine, (3) build a second real
-game (the trust game above, or something else) to catch anywhere the schema was accidentally
-Mafia-shaped.
+**Implemented:** lexer, parser, tree-walking interpreter; all three memory patterns
+above plus fully custom in-language ones; `sociallang/cli.py` (`run`, `schema`,
+`visualize`, `check`); an HTML replay visualizer (`sociallang/visualize.py`) with a
+public/private event timeline and agent roster; JSON schema export
+(`sociallang/schema_export.py`) — "export models and model patterns" for external
+tooling, i.e. a game's roles and memory patterns as plain JSON without parsing
+SocialLang. Two working example games. 28 tests covering the lexer, parser, interpreter
+semantics (including a deterministic vote-tally/eliminate test and a memory-windowing
+test), the native memory-retrieval math, and schema export.
+
+**Not implemented / open questions:**
+
+- Real embeddings for `generative`'s relevance term (currently lexical overlap) and
+  LLM-rated importance (currently heuristic) — flagged above as the natural upgrade path.
+- No static type checking or line-number-aware error recovery beyond "first parse error
+  stops the whole file" — fine for a small language authored by one person, would need
+  work for a wider audience.
+- No persistent numeric resources beyond ad-hoc `let` variables (e.g. an economy/currency
+  system spanning rounds) — would currently have to be hand-rolled per game via
+  dict/list state threaded through `loop`.
+- `visualize`'s HTML is intentionally plain (no charting, no filtering UI) — a fine
+  target for the `dataviz`/`artifact-design` treatment later if this needs to be shown
+  to someone rather than just read as a debug trace.
