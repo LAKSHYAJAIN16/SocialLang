@@ -1,0 +1,21 @@
+name: trust_game
+teams: [player]
+
+roles:
+  player:
+    team: player
+    count: remainder
+    sees: [own_role, public_history]
+    actions: [cooperate, defect]
+
+phases:
+  - name: round
+    order: simultaneous
+    actors: all
+    legal_actions: [use_ability]
+    resolution: [cooperate, defect]
+    repeats_until: 20_rounds
+
+win_conditions:
+  - team: player
+    when: "round > 20"
