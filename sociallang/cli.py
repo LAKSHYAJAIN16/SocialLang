@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from .lang.interpreter import SLRuntimeError, assign_agents, Interpreter
 from .lang.lexer import LexError
 from .lang.parser import ParseError, parse
+from .providers.embeddings import GoogleEmbeddingProvider, HashEmbeddingProvider, OpenAICompatEmbeddingProvider
 from .providers.factory import ModelSpec, build_provider, filter_roster_by_vendor, load_runnable_roster
 from .results import ResultsLogger
 from .schema_export import export_schema
@@ -18,6 +19,8 @@ from .visualize import render_html
 
 DEFAULT_MODELS_CONFIG = "config/models.yaml"
 DEFAULT_RESULTS_DIR = "results"
+DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_GOOGLE_EMBEDDING_MODEL = "text-embedding-004"
 
 
 def _load_roster(args: argparse.Namespace) -> dict:
@@ -35,6 +38,48 @@ def _load_roster(args: argparse.Namespace) -> dict:
     return roster
 
 
+def _build_embedder(args: argparse.Namespace):
+    """Relevance backend for generative(k) memory. 'lexical' keeps the old zero-config
+    Jaccard-overlap behavior; 'hash' (the default) is a real, offline, deterministic
+    embedding-space relevance score with no API key needed; 'openai'/'google' call out
+    to a real embedding API and fall back to 'hash' if the matching key is missing.
+    """
+    if args.embeddings == "lexical":
+        return None
+    if args.embeddings == "hash":
+        return HashEmbeddingProvider()
+    if args.embeddings == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("[run] --embeddings openai needs OPENAI_API_KEY -- falling back to 'hash'")
+            return HashEmbeddingProvider()
+        return OpenAICompatEmbeddingProvider(
+            args.embedding_model or DEFAULT_OPENAI_EMBEDDING_MODEL, api_key, "https://api.openai.com/v1"
+        )
+    if args.embeddings == "google":
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            print("[run] --embeddings google needs GEMINI_API_KEY -- falling back to 'hash'")
+            return HashEmbeddingProvider()
+        return GoogleEmbeddingProvider(args.embedding_model or DEFAULT_GOOGLE_EMBEDDING_MODEL, api_key)
+    raise ValueError(f"unknown --embeddings choice '{args.embeddings}'")
+
+
+def _build_importance_provider(args: argparse.Namespace, roster: dict):
+    """None keeps the old zero-config lexical-heuristic importance score; otherwise
+    picks the roster model that will rate each memory's importance (1-10) at write
+    time, per Park et al.'s original design -- see memory.llm_importance.
+    """
+    if not args.llm_importance:
+        return None
+    if args.importance_model:
+        if args.importance_model not in roster:
+            print(f"[run] --importance-model '{args.importance_model}' not in the roster -- aborting")
+            sys.exit(1)
+        return roster[args.importance_model][1]
+    return next(iter(roster.values()))[1]
+
+
 def _parse_or_die(path: str):
     with open(path, "r", encoding="utf-8") as f:
         source = f.read()
@@ -50,13 +95,17 @@ def cmd_run(args: argparse.Namespace) -> None:
     _source, sim = _parse_or_die(args.file)
     roster = _load_roster(args)
     print(f"[run] roster: {', '.join(roster.keys())}")
+    embedder = _build_embedder(args)
+    importance_provider = _build_importance_provider(args, roster)
 
     logger = None if args.no_save else ResultsLogger(args.out)
 
     for i in range(args.games):
         seed = args.seed + i if args.seed is not None else None
         agents, roles_by_name = assign_agents(sim, roster, random.Random(seed))
-        interp = Interpreter(sim, agents, roles_by_name, seed=seed)
+        interp = Interpreter(
+            sim, agents, roles_by_name, seed=seed, embedder=embedder, importance_provider=importance_provider
+        )
         result = interp.run(max_rounds=args.max_rounds)
 
         print(
@@ -110,6 +159,26 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--max-rounds", type=int, default=200, help="safety cap on loop iterations")
     run_p.add_argument("--out", default=DEFAULT_RESULTS_DIR, help="directory to save run JSON/HTML into")
     run_p.add_argument("--no-save", action="store_true", help="don't write result files, just print the outcome")
+    run_p.add_argument(
+        "--embeddings", choices=["lexical", "hash", "openai", "google"], default="hash",
+        help="relevance backend for generative(k) memory: 'lexical' (old Jaccard-overlap default), "
+             "'hash' (offline deterministic embedding, no API key -- the default), 'openai'/'google' "
+             "(real embedding API, needs the matching API key; falls back to 'hash' if missing)",
+    )
+    run_p.add_argument(
+        "--embedding-model", default=None,
+        help=f"embedding model id for --embeddings openai/google "
+             f"(default: {DEFAULT_OPENAI_EMBEDDING_MODEL} / {DEFAULT_GOOGLE_EMBEDDING_MODEL})",
+    )
+    run_p.add_argument(
+        "--llm-importance", action="store_true",
+        help="rate each memory's importance with an LLM call (1-10) instead of the lexical heuristic",
+    )
+    run_p.add_argument(
+        "--importance-model", default=None,
+        help="roster key of the model that rates importance when --llm-importance is set "
+             "(default: first available model in the roster)",
+    )
     run_p.set_defaults(func=cmd_run)
 
     schema_p = sub.add_parser("schema", help="export a .sl program's roles/memory patterns as JSON")

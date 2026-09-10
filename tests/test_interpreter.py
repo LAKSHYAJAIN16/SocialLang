@@ -113,3 +113,63 @@ def test_mafia_sl_runs_to_completion_with_mock_provider():
     result = run_source(_load("mafia.sl"), roster, seed=3, max_rounds=30)
     assert result["winner"] in ("town", "mafia")
     assert result["rounds"] >= 1
+
+
+def test_generative_memory_pattern_uses_the_configured_embedder():
+    from sociallang.providers.embeddings import HashEmbeddingProvider
+
+    provider = FixedProvider("ok")
+    roster = {"solo": (None, provider)}
+    source = """
+    sim GenTest {
+      agents: 1
+      role Solo { team: "solo" memory: generative(2) sees: none count: 1 }
+      phase Speak {
+        broadcast("the mafia voted to eliminate P3")
+        broadcast("nice weather today")
+        for a in alive() {
+          ask(a, "who is the mafia?")
+        }
+      }
+      win_condition { return "done" }
+      loop { run Speak return check_win() }
+    }
+    """
+    run_source(source, roster, seed=0, max_rounds=1, embedder=HashEmbeddingProvider())
+    last_system, last_user = provider.calls[-1]
+    assert "the mafia voted to eliminate P3" in last_user  # more relevant than the small-talk event
+
+
+def test_llm_importance_provider_is_used_to_rate_written_events():
+    class ImportanceRatingProvider(ChatProvider):
+        def __init__(self):
+            super().__init__(model_id="judge", api_key=None)
+            self.rated: list[str] = []
+
+        def complete(self, system_prompt, user_prompt, temperature=0.9, max_tokens=500, timeout=60):
+            self.rated.append(user_prompt)
+            return ProviderResponse(text="7")
+
+    actor = FixedProvider("ok")
+    judge = ImportanceRatingProvider()
+    roster = {"solo": (None, actor)}
+    source = """
+    sim ImpTest {
+      agents: 1
+      role Solo { team: "solo" memory: full_history sees: none count: 1 }
+      phase Speak { broadcast("something happened") }
+      win_condition { return "done" }
+      loop { run Speak return check_win() }
+    }
+    """
+    from sociallang.lang.interpreter import Interpreter, assign_agents
+    from sociallang.lang.parser import parse
+    import random
+
+    sim = parse(source)
+    agents, roles_by_name = assign_agents(sim, roster, random.Random(0))
+    interp = Interpreter(sim, agents, roles_by_name, seed=0, importance_provider=judge)
+    interp.run(max_rounds=1)
+
+    assert any("something happened" in p for p in judge.rated)
+    assert interp.events[0].importance == 0.7

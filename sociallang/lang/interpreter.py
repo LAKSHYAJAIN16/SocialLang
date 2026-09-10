@@ -36,6 +36,7 @@ class Event:
     author: str | None
     visible_to: set[str] | None  # None means public
     importance: float = 0.0
+    embedding: list[float] | None = None  # cached by memory._embedding_relevances, see there
 
 
 @dataclass
@@ -141,7 +142,15 @@ class Interpreter:
         "<": operator.lt, ">": operator.gt, "<=": operator.le, ">=": operator.ge,
     }
 
-    def __init__(self, sim: SimDecl, agents: list[Agent], roles_by_name: dict, seed: int | None = None):
+    def __init__(
+        self,
+        sim: SimDecl,
+        agents: list[Agent],
+        roles_by_name: dict,
+        seed: int | None = None,
+        embedder: Any = None,
+        importance_provider: Any = None,
+    ):
         self.sim = sim
         self.agents = agents
         self.roles = roles_by_name
@@ -150,6 +159,11 @@ class Interpreter:
         self.round = 0
         self.run_log: list[dict] = []
         self.rng = random.Random(seed)
+        # Both optional and duck-typed (EmbeddingProvider.embed / ChatProvider.complete)
+        # -- see memory.retrieve's `embedder` param and memory.llm_importance -- so this
+        # module still has no hard dependency on sociallang/providers.
+        self.embedder = embedder
+        self.importance_provider = importance_provider
 
         self.user_fns = {f.name: f for f in sim.fns}
         self.phases = {p.name: p for p in sim.phases}
@@ -378,7 +392,12 @@ class Interpreter:
         self, kind: str, text: str, author: str | None, visible_to: set[str] | None, importance: float | None = None
     ) -> Event:
         self.seq += 1
-        imp = memory.heuristic_importance(text) if importance is None else importance
+        if importance is not None:
+            imp = importance
+        elif self.importance_provider is not None:
+            imp = memory.llm_importance(text, self.importance_provider)
+        else:
+            imp = memory.heuristic_importance(text)
         e = Event(seq=self.seq, round=self.round, kind=kind, text=text, author=author, visible_to=visible_to, importance=imp)
         self.events.append(e)
         self.run_log.append(
@@ -415,7 +434,7 @@ class Interpreter:
             return events[-n:] if n > 0 else []
         if name == "generative":
             k = int(args[0]) if args else 8
-            return memory.retrieve(events, query, self.seq, k)
+            return memory.retrieve(events, query, self.seq, k, embedder=self.embedder)
         raise SLRuntimeError(f"unknown memory strategy '{name}' (not a native kind, no `memory {name}(...) {{ }}` declared)")
 
     def build_context_for(self, agent: Agent, query: str) -> str:
@@ -495,7 +514,7 @@ class Interpreter:
     def _bi_reflect(self, args: list[Any]) -> list[str]:
         agent: Agent = args[0]
         visible = self._visible_events_for(agent)
-        top = memory.retrieve(visible, "", self.seq, 15)
+        top = memory.retrieve(visible, "", self.seq, 15, embedder=self.embedder)
         context = "\n".join(self._render_event(e) for e in top)
         role = self.roles[agent.role_name]
         identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
@@ -565,9 +584,18 @@ class Interpreter:
         }
 
 
-def run_source(source: str, roster: dict, seed: int | None = None, max_rounds: int = 200) -> dict:
+def run_source(
+    source: str,
+    roster: dict,
+    seed: int | None = None,
+    max_rounds: int = 200,
+    embedder: Any = None,
+    importance_provider: Any = None,
+) -> dict:
     sim = parse(source)
     rng = random.Random(seed)
     agents, roles_by_name = assign_agents(sim, roster, rng)
-    interp = Interpreter(sim, agents, roles_by_name, seed=seed)
+    interp = Interpreter(
+        sim, agents, roles_by_name, seed=seed, embedder=embedder, importance_provider=importance_provider
+    )
     return interp.run(max_rounds=max_rounds)

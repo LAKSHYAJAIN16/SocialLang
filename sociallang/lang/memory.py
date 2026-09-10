@@ -13,16 +13,17 @@ recent memories, itself stored back into the memory stream as a distinctively
 high-importance new entry.
 
 This module keeps that three-factor retrieval shape and the reflection mechanism
-(`reflect()` in interpreter.py), but swaps the two paper components that require extra
-LLM calls or an embedding index for cheap deterministic stand-ins: importance is a
-lexical heuristic instead of an LLM-rated score, and relevance is token-overlap
-(Jaccard) instead of embedding similarity. Both are the natural place to plug in a
-real embedding provider and an LLM importance-rating call later without changing the
-retrieval formula's shape.
+(`reflect()` in interpreter.py). `heuristic_importance`/`lexical_relevance` remain
+the zero-config deterministic stand-ins (still the default); `llm_importance` and
+passing an `embedder` to `retrieve()` are the real upgrades DESIGN.md flagged --
+an LLM-rated 1-10 importance score and real embedding cosine similarity (see
+sociallang/providers/embeddings.py), both opt-in via CLI flags in cli.py so
+existing runs stay free and deterministic unless asked otherwise.
 """
 
 from __future__ import annotations
 
+import math
 import re
 
 _IMPORTANT_WORDS = {
@@ -73,14 +74,91 @@ def recency_score(event_seq: int, now_seq: int, decay: float = 0.995) -> float:
     return decay**age
 
 
-def retrieve(events: list, query: str, now_seq: int, k: int) -> list:
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+_IMPORTANCE_SYSTEM_PROMPT = (
+    "You rate how important a single event is to remember for future decisions in a "
+    "social strategy game, on a scale from 1 (trivial small talk) to 10 (pivotal, e.g. "
+    "an elimination, a betrayal, or a vote result). Respond with only the number."
+)
+
+
+def llm_importance(text: str, provider) -> float:
+    """0..1 importance score from an LLM rating call, matching the paper's write-time
+    importance assignment. `provider` is duck-typed to the same
+    `complete(system_prompt, user_prompt, temperature=, max_tokens=) -> response.text`
+    shape as ChatProvider (see sociallang/providers/base.py) -- no import needed here,
+    consistent with how interpreter.py already calls `agent.provider.complete(...)`
+    without depending on any concrete provider class.
+
+    Falls back to `heuristic_importance` if no provider is given, the call errors, or
+    its reply doesn't contain a parseable number -- callers never need to handle a
+    failure case themselves.
+    """
+    if provider is None:
+        return heuristic_importance(text)
+    resp = provider.complete(
+        _IMPORTANCE_SYSTEM_PROMPT, f"Event: {text}", temperature=0.0, max_tokens=5,
+    )
+    match = _NUMBER_RE.search(resp.text or "")
+    if match is None:
+        return heuristic_importance(text)
+    return max(0.0, min(1.0, float(match.group()) / 10.0))
+
+
+def _embedding_relevances(events: list, query: str, embedder) -> dict[int, float]:
+    """Relevance term via real embedding cosine similarity instead of Jaccard token
+    overlap. Each event's embedding is computed once and cached on the event object
+    (`e.embedding`) since `retrieve()` is called repeatedly over a growing, mostly
+    unchanged event list -- without caching, a real API-backed embedder would redo
+    O(events) embedding calls on every single ask() over the course of a game.
+    Falls back to lexical_relevance wholesale if the embedder can't produce a query
+    vector at all (e.g. an API failure), so a flaky embedding provider degrades
+    gracefully rather than silently returning zero relevance for every candidate.
+    """
+    uncached = [e for e in events if e.embedding is None]
+    query_vec, *fresh_vecs = embedder.embed([query] + [e.text for e in uncached])
+    if query_vec is None:
+        return {id(e): lexical_relevance(query, e.text) for e in events}
+    for e, vec in zip(uncached, fresh_vecs):
+        if vec is not None:
+            e.embedding = vec
+
+    relevances = {}
+    for e in events:
+        relevances[id(e)] = (
+            (cosine_similarity(query_vec, e.embedding) + 1.0) / 2.0
+            if e.embedding is not None
+            else lexical_relevance(query, e.text)
+        )
+    return relevances
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def retrieve(events: list, query: str, now_seq: int, k: int, embedder=None) -> list:
     """Top-k events by recency + importance + relevance (equal-weighted sum, matching
     the paper's default), returned back in chronological order so the prompt reads as
     a coherent timeline rather than a relevance-ranked jumble.
+
+    `embedder` (see sociallang/providers/embeddings.py's EmbeddingProvider) swaps the
+    relevance term from lexical Jaccard overlap to real embedding cosine similarity;
+    omit it (the default) to keep the old zero-config lexical behavior.
     """
+    relevances = _embedding_relevances(events, query, embedder) if embedder is not None else None
     scored = []
     for e in events:
-        score = recency_score(e.seq, now_seq) + e.importance + lexical_relevance(query, e.text)
+        relevance = relevances[id(e)] if relevances is not None else lexical_relevance(query, e.text)
+        score = recency_score(e.seq, now_seq) + e.importance + relevance
         scored.append((score, e))
     scored.sort(key=lambda pair: pair[0], reverse=True)
     top = [e for _, e in scored[: max(int(k), 0)]]

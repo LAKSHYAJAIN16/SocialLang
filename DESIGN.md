@@ -170,22 +170,52 @@ importance `0.9`. A script decides when to call it (e.g. once per day-phase) —
 single-level simplification of the paper's hierarchical reflection tree, not a full
 port.
 
+### Real embeddings and LLM-rated importance
+
+The two paper components originally stood in for by cheap deterministic heuristics
+(above) now have real implementations, both opt-in via `sociallang run` flags so
+existing runs stay free and deterministic unless asked otherwise:
+
+- **Relevance** (`--embeddings {lexical,hash,openai,google}`, default `hash`) —
+  `sociallang/providers/embeddings.py` defines an `EmbeddingProvider` duck-type
+  (`embed(texts) -> list[vector | None]`) with three implementations: `lexical`
+  keeps the old Jaccard-overlap behavior (no vectors at all); `hash` is a real,
+  offline, deterministic bag-of-words feature-hashing embedding (stable md5-hashed
+  token buckets, L2-normalized) — a genuine point in a vector space, not token
+  overlap, needing no API key, so it's the default; `openai`/`google` call a real
+  embedding API (OpenAI's `/embeddings`, Google's `batchEmbedContents`) and fall
+  back to `hash` if the matching API key is missing. `memory.retrieve()` takes an
+  optional `embedder` and, when given one, swaps `lexical_relevance` for embedding
+  cosine similarity — each event's embedding is computed once and cached on the
+  `Event` object (`e.embedding`) since `retrieve()` runs on every `ask()` over a
+  growing, mostly-unchanged event list.
+- **Importance** (`--llm-importance`, `--importance-model <roster key>`) —
+  `memory.llm_importance(text, provider)` asks a model (duck-typed to
+  `ChatProvider.complete`) to rate an event 1-10, parses the number out of its
+  reply, and normalizes to 0..1; it falls back to `heuristic_importance` if no
+  provider is configured or the reply has no parseable number. `Interpreter`
+  takes an optional `importance_provider` and uses it in `_append_event` instead
+  of the heuristic when set.
+
+Both are plugged in the same way the module doc always said they would be: without
+changing `retrieve()`'s recency+importance+relevance formula shape.
+
 ## What's implemented vs. not
 
 **Implemented:** lexer, parser, tree-walking interpreter; all three memory patterns
-above plus fully custom in-language ones; `sociallang/cli.py` (`run`, `schema`,
-`visualize`, `check`); an HTML replay visualizer (`sociallang/visualize.py`) with a
-public/private event timeline and agent roster; JSON schema export
-(`sociallang/schema_export.py`) — "export models and model patterns" for external
-tooling, i.e. a game's roles and memory patterns as plain JSON without parsing
-SocialLang. Two working example games. 28 tests covering the lexer, parser, interpreter
-semantics (including a deterministic vote-tally/eliminate test and a memory-windowing
-test), the native memory-retrieval math, and schema export.
+above plus fully custom in-language ones; real embedding-based relevance and
+LLM-rated importance for `generative(k)` memory (see above); `sociallang/cli.py`
+(`run`, `schema`, `visualize`, `check`); an HTML replay visualizer
+(`sociallang/visualize.py`) with a public/private event timeline and agent roster;
+JSON schema export (`sociallang/schema_export.py`) — "export models and model
+patterns" for external tooling, i.e. a game's roles and memory patterns as plain
+JSON without parsing SocialLang. Two working example games. 46 tests covering the
+lexer, parser, interpreter semantics (including a deterministic vote-tally/eliminate
+test and a memory-windowing test), the native memory-retrieval math, the embedding
+providers, and schema export.
 
 **Not implemented / open questions:**
 
-- Real embeddings for `generative`'s relevance term (currently lexical overlap) and
-  LLM-rated importance (currently heuristic) — flagged above as the natural upgrade path.
 - No static type checking or line-number-aware error recovery beyond "first parse error
   stops the whole file" — fine for a small language authored by one person, would need
   work for a wider audience.
