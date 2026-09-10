@@ -279,9 +279,13 @@ memory-retrieval math, the embedding providers, and schema export.
 
 A live event-streaming bridge (`sociallang/engine/live.py`, `sociallang run --live`)
 lets an external viewer watch a run as it happens instead of only reading the final
-JSON — see its module docstring for the WebSocket message schema. A Unity client that
-consumes it is in progress under `unity/`; see that directory's README for current
-status rather than treating this paragraph as authoritative for long.
+JSON — see its module docstring for the WebSocket message schema. `unity/` has a
+Unity client that consumes it (agents as points on a 2D map, click one for its recent
+events) plus a replay mode for a saved JSON file; see `unity/README.md` for setup and
+its one honest limitation (replay only has final agent positions, not full movement,
+since a saved run doesn't persist a snapshot per round). That client compiles clean
+against a stubbed Unity API (see the README) but hasn't been opened in a real Editor
+yet — treat "does it actually run" as open until someone does that.
 
 **Not implemented / open questions:**
 
