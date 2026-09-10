@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from .ast_nodes import (
     Attr, AssignStmt, BinaryOp, Block, BoolLit, BreakStmt, Call, DictLit, Expr, ExprStmt,
-    FnDecl, ForStmt, Identifier, IfStmt, Index, LetStmt, ListLit, MemoryDecl, NullLit,
-    NumberLit, PhaseDecl, ReturnStmt, RoleDecl, RunStmt, SimDecl, Stmt, StringLit, UnaryOp,
-    WhileStmt,
+    FnDecl, ForStmt, Identifier, IfStmt, Index, LetStmt, ListLit, LocationTypeDecl, MemoryDecl,
+    NullLit, NumberLit, PhaseDecl, ReturnStmt, RoleDecl, RunStmt, SimDecl, Stmt, StringLit,
+    UnaryOp, WhileStmt, WorldDecl,
 )
 from .lexer import Token, tokenize
 
@@ -80,6 +80,8 @@ class Parser:
             elif self._is_kw("loop"):
                 self._advance()
                 sim.loop = self._parse_block()
+            elif self._is_kw("world"):
+                sim.world = self._parse_world_decl()
             else:
                 cur = self._peek()
                 raise ParseError(f"line {cur.line}: unexpected token {cur.value!r} in sim body")
@@ -138,6 +140,49 @@ class Parser:
 
         self._expect("SYMBOL", "}")
         return RoleDecl(name=name, team=team, memory_name=memory_name, memory_args=memory_args, sees=sees, count=count)
+
+    def _parse_world_decl(self) -> WorldDecl:
+        self._advance()  # 'world'
+        self._expect("SYMBOL", "{")
+        width, height = 0, 0
+        location_types: list[LocationTypeDecl] = []
+        while not self._check("SYMBOL", "}"):
+            if self._peek().kind == "IDENT" and self._peek().value == "location":
+                location_types.append(self._parse_location_type_decl())
+                continue
+            field_name = self._advance().value  # IDENT, e.g. "width"/"height"
+            self._expect("SYMBOL", ":")
+            if field_name == "width":
+                width = int(float(self._expect("NUMBER").value))
+            elif field_name == "height":
+                height = int(float(self._expect("NUMBER").value))
+            else:
+                raise ParseError(f"unknown world field {field_name!r}")
+            self._match("SYMBOL", ",")
+        self._expect("SYMBOL", "}")
+        return WorldDecl(width=width, height=height, location_types=location_types)
+
+    def _parse_location_type_decl(self) -> LocationTypeDecl:
+        self._advance()  # 'location'
+        name = self._expect("IDENT").value
+        self._expect("SYMBOL", "{")
+        tag: str | None = None
+        capacity: int | None = None
+        count = 1
+        while not self._check("SYMBOL", "}"):
+            field_name = self._advance().value
+            self._expect("SYMBOL", ":")
+            if field_name == "tag":
+                tag = self._expect("STRING").value
+            elif field_name == "capacity":
+                capacity = int(float(self._expect("NUMBER").value))
+            elif field_name == "count":
+                count = int(float(self._expect("NUMBER").value))
+            else:
+                raise ParseError(f"unknown location field {field_name!r}")
+            self._match("SYMBOL", ",")
+        self._expect("SYMBOL", "}")
+        return LocationTypeDecl(name=name, tag=tag, capacity=capacity, count=count)
 
     def _parse_fn_decl(self) -> FnDecl:
         self._advance()  # 'fn'

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 KEYWORDS = {
-    "sim", "agents", "memory", "role", "fn", "phase", "win_condition", "loop",
+    "sim", "agents", "memory", "role", "fn", "phase", "win_condition", "loop", "world",
     "let", "if", "else", "while", "for", "in", "return", "run", "break",
     "true", "false", "null", "and", "or", "not",
 }

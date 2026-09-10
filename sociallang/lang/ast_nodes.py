@@ -16,6 +16,26 @@ class SimDecl:
     phases: list["PhaseDecl"] = field(default_factory=list)
     win_condition: "Block | None" = None
     loop: "Block | None" = None
+    world: "WorldDecl | None" = None
+
+
+@dataclass
+class LocationTypeDecl:
+    """One kind of place in the world (e.g. `location Cafe { ... }`). The interpreter
+    procedurally scatters `count` concrete instances of it at simulation start -- the
+    program declares what exists and how many, not where each one sits.
+    """
+    name: str
+    tag: str | None
+    capacity: int | None
+    count: int
+
+
+@dataclass
+class WorldDecl:
+    width: int
+    height: int
+    location_types: list["LocationTypeDecl"] = field(default_factory=list)
 
 
 @dataclass
