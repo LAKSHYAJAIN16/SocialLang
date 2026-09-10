@@ -269,6 +269,11 @@ class Interpreter:
             if self.sink is not None:
                 self.sink.emit_agents_snapshot(self._agents_snapshot())
         if self.sink is not None:
+            # A `return` inside the loop body (the common pattern -- see every
+            # games/*.sl) raises ReturnSignal and skips the post-round snapshot
+            # above, so always send one final snapshot here before "done" -- callers
+            # shouldn't have to infer end-of-run agent state from event text alone.
+            self.sink.emit_agents_snapshot(self._agents_snapshot())
             self.sink.emit_done(winner, self.round)
         return {
             "winner": winner,

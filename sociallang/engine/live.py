@@ -75,6 +75,9 @@ class WebSocketSink:
                 self._clients.discard(ws)
 
         self._server = await self._websockets.serve(handler, self.host, self.port)
+        # port=0 asks the OS for a free port; resolve the actual bound port so
+        # callers (and tests) can discover it via self.port after construction.
+        self.port = self._server.sockets[0].getsockname()[1]
         self._ready.set()
         await self._server.wait_closed()
 
