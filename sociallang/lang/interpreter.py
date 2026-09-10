@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import heapq
 import operator
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -48,6 +50,9 @@ class Agent:
     provider: Any
     alive: bool = True
     death_cause: str | None = None
+    x: float | None = None
+    y: float | None = None
+    location_id: str | None = None
 
     def __hash__(self) -> int:
         return hash(self.seat)
@@ -57,6 +62,28 @@ class Agent:
 
     def __repr__(self) -> str:
         return self.seat
+
+
+@dataclass
+class Location:
+    """One procedurally-placed instance of a `world { location <Type> { ... } }`
+    declaration -- e.g. `Cafe_0` at (12.3, 44.1). See Interpreter._setup_world.
+    """
+    id: str
+    type_name: str
+    tag: str | None
+    capacity: int | None
+    x: float
+    y: float
+
+    def __hash__(self) -> int:
+        return hash(self.id)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Location) and other.id == self.id
+
+    def __repr__(self) -> str:
+        return self.id
 
 
 class Env:
@@ -155,6 +182,12 @@ class Interpreter:
         self.agents = agents
         self.roles = roles_by_name
         self.events: list[Event] = []
+        # Per-agent visibility index maintained incrementally in _append_event, so
+        # _visible_events_for is O(that agent's own visible count) instead of O(total
+        # events) -- the fix that keeps ask()/reflect() cheap as the event log and
+        # agent count both grow into the thousands over a long run.
+        self._public_events: list[Event] = []
+        self._private_events: dict[str, list[Event]] = {}
         self.seq = 0
         self.round = 0
         self.run_log: list[dict] = []
@@ -172,6 +205,40 @@ class Interpreter:
         self.global_env = Env()
         self.global_env.define("agents", list(agents))
         self.builtins = self._make_builtins()
+
+        self.world = sim.world
+        self.world_locations: dict[str, Location] = {}
+        if self.world is not None:
+            self._setup_world()
+
+    # -- world / spatial setup --
+
+    def _setup_world(self) -> None:
+        """Procedurally scatter `count` instances of each declared location type
+        across the world's grid, using the same seeded RNG as everything else so a
+        run is fully reproducible under --seed. Rejection-sampling with a minimum
+        spacing keeps instances from landing on top of each other; falls back to an
+        unchecked random point after a bounded number of attempts so a dense world
+        (many locations relative to grid area) can't spin forever.
+        """
+        w, h = self.world.width, self.world.height
+        for lt in self.world.location_types:
+            for i in range(lt.count):
+                loc_id = f"{lt.name}_{i}"
+                x, y = self._scatter_point(w, h)
+                self.world_locations[loc_id] = Location(
+                    id=loc_id, type_name=lt.name, tag=lt.tag, capacity=lt.capacity, x=x, y=y,
+                )
+
+    def _scatter_point(self, w: int, h: int, min_spacing: float = 1.0, max_attempts: int = 20) -> tuple[float, float]:
+        if w <= 0 or h <= 0:
+            return 0.0, 0.0
+        spacing2 = min_spacing * min_spacing
+        for _ in range(max_attempts):
+            x, y = self.rng.uniform(0, w), self.rng.uniform(0, h)
+            if all((x - loc.x) ** 2 + (y - loc.y) ** 2 >= spacing2 for loc in self.world_locations.values()):
+                return x, y
+        return self.rng.uniform(0, w), self.rng.uniform(0, h)
 
     # -- public entrypoint --
 
@@ -340,6 +407,8 @@ class Interpreter:
     def _values_equal(left: Any, right: Any) -> bool:
         if isinstance(left, Agent) or isinstance(right, Agent):
             return isinstance(left, Agent) and isinstance(right, Agent) and left.seat == right.seat
+        if isinstance(left, Location) or isinstance(right, Location):
+            return isinstance(left, Location) and isinstance(right, Location) and left.id == right.id
         return left == right
 
     def _eval_attr(self, node: Attr, env: Env) -> Any:
@@ -348,11 +417,17 @@ class Interpreter:
             mapping = {
                 "seat": obj.seat, "role": obj.role_name, "team": obj.team,
                 "alive": obj.alive, "model": obj.model_key,
+                "x": obj.x, "y": obj.y, "location": self.world_locations.get(obj.location_id),
             }
         elif isinstance(obj, Event):
             mapping = {
                 "text": obj.text, "author": obj.author, "kind": obj.kind,
                 "seq": float(obj.seq), "round": float(obj.round), "importance": obj.importance,
+            }
+        elif isinstance(obj, Location):
+            mapping = {
+                "id": obj.id, "type": obj.type_name, "tag": obj.tag,
+                "capacity": obj.capacity, "x": obj.x, "y": obj.y,
             }
         else:
             raise SLRuntimeError(f"'.{node.name}' is not valid on this kind of value")
@@ -386,7 +461,13 @@ class Interpreter:
     # -- memory / events --
 
     def _visible_events_for(self, agent: Agent) -> list[Event]:
-        return [e for e in self.events if e.visible_to is None or agent.seat in e.visible_to]
+        private = self._private_events.get(agent.seat)
+        if not private:
+            return list(self._public_events)
+        # Both lists are already in seq order (append-only), so this is a linear
+        # merge over just this agent's own visible events, not a scan of the full
+        # event log -- see the index maintained in _append_event.
+        return list(heapq.merge(self._public_events, private, key=lambda e: e.seq))
 
     def _append_event(
         self, kind: str, text: str, author: str | None, visible_to: set[str] | None, importance: float | None = None
@@ -400,6 +481,11 @@ class Interpreter:
             imp = memory.heuristic_importance(text)
         e = Event(seq=self.seq, round=self.round, kind=kind, text=text, author=author, visible_to=visible_to, importance=imp)
         self.events.append(e)
+        if visible_to is None:
+            self._public_events.append(e)
+        else:
+            for seat in visible_to:
+                self._private_events.setdefault(seat, []).append(e)
         self.run_log.append(
             {"seq": e.seq, "round": e.round, "kind": kind, "text": text, "author": author,
              "visible_to": sorted(visible_to) if visible_to else None}
@@ -449,6 +535,8 @@ class Interpreter:
     def _stringify(self, v: Any) -> str:
         if isinstance(v, Agent):
             return v.seat
+        if isinstance(v, Location):
+            return v.id
         if isinstance(v, Event):
             return v.text
         if isinstance(v, bool):
@@ -492,6 +580,70 @@ class Interpreter:
             if lab.lower() in text.lower():
                 return o
         return self.rng.choice(options) if options else None
+
+    def _bi_ask_all(self, args: list[Any], kwargs: dict[str, Any]) -> dict[Agent, str]:
+        """Like ask(), but for many agents at once: builds every agent's prompt (pure,
+        single-threaded, deterministic), then fires all provider.complete() calls
+        concurrently via a thread pool -- ChatProvider.complete is a stateless,
+        blocking HTTP call with no shared mutable state per provider instance, so
+        this is safe with zero provider-side changes. This is what makes a
+        few-hundred-agent LLM-tier batch cost roughly one round-trip instead of N
+        serial ones. Results are applied to the event log in agent-list order
+        (Executor.map preserves input order), not completion order, so a run stays
+        reproducible under --seed. Returns {agent: response_text}.
+        """
+        agents_list: list[Agent] = args[0]
+        prompt: str = args[1]
+        temperature = float(kwargs.get("temperature", 0.9))
+        max_tokens = int(kwargs.get("max_tokens", 500))
+        max_workers = int(kwargs.get("max_workers", 16))
+
+        prepared = []
+        for agent in agents_list:
+            context = self.build_context_for(agent, prompt)
+            role = self.roles[agent.role_name]
+            identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
+            if role.sees == "teammates":
+                teammates = [a.seat for a in self.agents if a is not agent and a.role_name == role.name]
+                if teammates:
+                    identity += f" Your teammates are: {', '.join(teammates)}."
+            user_prompt = f"What has happened so far:\n{context}\n\nNow: {prompt}"
+            prepared.append((agent, identity, user_prompt))
+
+        def call_one(item: tuple[Agent, str, str]) -> str:
+            agent, identity, user_prompt = item
+            resp = agent.provider.complete(identity, user_prompt, temperature=temperature, max_tokens=max_tokens)
+            return resp.text or ""
+
+        if not prepared:
+            return {}
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(prepared))) as ex:
+            texts = list(ex.map(call_one, prepared))
+
+        results: dict[Agent, str] = {}
+        for (agent, _identity, _user_prompt), text in zip(prepared, texts):
+            self._append_event(kind="ask", text=f"(asked: {prompt}) {text}", author=agent.seat, visible_to={agent.seat})
+            results[agent] = text
+        return results
+
+    def _bi_ask_choice_all(self, args: list[Any], kwargs: dict[str, Any]) -> dict[Agent, Any]:
+        agents_list: list[Agent] = args[0]
+        prompt, options = args[1], args[2]
+        labels = [self._stringify(o) for o in options]
+        full_prompt = f"{prompt}\n\nRespond with exactly one of: {', '.join(labels)}"
+        texts = self._bi_ask_all([agents_list, full_prompt], kwargs)
+
+        results: dict[Agent, Any] = {}
+        for agent in agents_list:
+            text = texts[agent]
+            norm = text.strip().strip(".\"'").lower()
+            chosen = next((o for o, lab in zip(options, labels) if lab.lower() == norm), None)
+            if chosen is None:
+                chosen = next((o for o, lab in zip(options, labels) if lab.lower() in text.lower()), None)
+            if chosen is None:
+                chosen = self.rng.choice(options) if options else None
+            results[agent] = chosen
+        return results
 
     def _bi_broadcast(self, args: list[Any]) -> None:
         if len(args) == 1:
@@ -548,6 +700,32 @@ class Interpreter:
         winners = [v[0] for v in buckets.values() if len(v) == best_count]
         return self.rng.choice(winners)
 
+    def _bi_spawn_agents_at(self, args: list[Any], kwargs: dict[str, Any]) -> None:
+        agents_list: list[Agent] = args[0]
+        tag = args[1] if len(args) > 1 else kwargs.get("tag")
+        candidates = [loc for loc in self.world_locations.values() if tag is None or loc.tag == tag]
+        if not candidates:
+            raise SLRuntimeError("spawn_agents_at: no locations match" + (f" tag '{tag}'" if tag else ""))
+        for agent in agents_list:
+            loc = self.rng.choice(candidates)
+            agent.location_id, agent.x, agent.y = loc.id, loc.x, loc.y
+
+    def _bi_move_to(self, args: list[Any]) -> None:
+        agent: Agent = args[0]
+        loc: Location = args[1]
+        agent.location_id, agent.x, agent.y = loc.id, loc.x, loc.y
+
+    def _bi_nearby(self, args: list[Any], kwargs: dict[str, Any]) -> list[Agent]:
+        agent: Agent = args[0]
+        radius = float(args[1]) if len(args) > 1 else float(kwargs.get("radius", 5.0))
+        if agent.x is None:
+            return []
+        r2 = radius * radius
+        return [
+            ag for ag in self.agents
+            if ag is not agent and ag.x is not None and (ag.x - agent.x) ** 2 + (ag.y - agent.y) ** 2 <= r2
+        ]
+
     def _bi_print(self, value: Any) -> None:
         text = self._stringify(value)
         self.run_log.append({"seq": None, "round": self.round, "kind": "print", "text": text, "author": None, "visible_to": None})
@@ -566,6 +744,8 @@ class Interpreter:
         return {
             "ask": lambda a, k: self._bi_ask(a, k),
             "ask_choice": lambda a, k: self._bi_ask_choice(a, k),
+            "ask_all": lambda a, k: self._bi_ask_all(a, k),
+            "ask_choice_all": lambda a, k: self._bi_ask_choice_all(a, k),
             "broadcast": lambda a, k: self._bi_broadcast(a),
             "whisper": lambda a, k: self._bi_whisper(a),
             "remember": lambda a, k: self._bi_remember(a),
@@ -581,6 +761,13 @@ class Interpreter:
             "str": lambda a, k: self._stringify(a[0]),
             "print": lambda a, k: self._bi_print(a[0]),
             "check_win": lambda a, k: self._check_win(),
+            "locations": lambda a, k: list(self.world_locations.values()),
+            "locations_by_tag": lambda a, k: [loc for loc in self.world_locations.values() if loc.tag == a[0]],
+            "spawn_agents_at": lambda a, k: self._bi_spawn_agents_at(a, k),
+            "move_to": lambda a, k: self._bi_move_to(a),
+            "location_of": lambda a, k: self.world_locations.get(a[0].location_id),
+            "agents_at": lambda a, k: [ag for ag in self.agents if ag.location_id == a[0].id],
+            "nearby": lambda a, k: self._bi_nearby(a, k),
         }
 
 
