@@ -75,10 +75,11 @@ sim Mafia {
 }
 ```
 
-The full worked examples are `games/mafia.sl` (a complete Mafia implementation) and
+The full worked examples are `games/mafia.sl` (a complete Mafia implementation),
 `games/trust_game.sl` (a structurally different game — no hidden roles, no elimination,
-just repeated cooperate/defect rounds with a round-count win condition) — proof the
-language isn't accidentally Mafia-shaped.
+just repeated cooperate/defect rounds with a round-count win condition), and
+`games/city.sl` (a spatial, 5,050-agent demo — see "World and scale" below) — proof the
+language isn't accidentally Mafia-shaped, or small-population-shaped.
 
 ### Grammar
 
@@ -87,6 +88,8 @@ Top-level: a program is exactly one `sim <Name> { ... }` block containing, in an
 - `agents: <n>` or `agents: <lo>..<hi>` — population size (fixed or a range, redrawn each run)
 - `role <Name> { team: "..", memory: <pattern>(<args>), sees: teammates|none, count: <n>|remainder }`
   — at most one role may use `count: remainder`
+- `world { width: <n>, height: <n>, location <Type> { tag: "..", capacity: <n>, count: <n> } ... }`
+  — optional; see "World and scale" below
 - `memory <name>(<params>) { <statements> }` — a custom memory pattern (see below)
 - `fn <name>(<params>) { <statements> }` — an ordinary function
 - `phase <name> { <statements> }` — a named block of game logic, invoked with `run <name>`
@@ -122,6 +125,53 @@ strings or adds two numbers; concatenating a string with anything else needs an 
 | `tally(votes)` | Given a dict of agent → target, returns the majority target (ties broken randomly) |
 | `count(x)`, `last(list, n)`, `random_choice(list)`, `str(x)`, `print(x)` | Utility |
 | `check_win()` | Runs `win_condition` once, returns its result (or `null`) |
+| `ask_all(agents, prompt, temperature=, max_tokens=, max_workers=)` | Bulk `ask()`: fires every agent's `provider.complete()` call concurrently (a thread pool, since `ChatProvider.complete` is a stateless blocking call), returns `{agent: text}` |
+| `ask_choice_all(agents, prompt, options)` | Bulk `ask_choice()`, same concurrency, returns `{agent: chosen_option}` |
+| `locations()` / `locations_by_tag(tag)` | All procedurally-placed `Location`s from the `world` block, optionally filtered by tag |
+| `spawn_agents_at(agents, tag=)` | Randomly places each agent at a location (optionally restricted to one tag), setting its position |
+| `move_to(agent, location)` | Moves one agent to a specific `Location` |
+| `location_of(agent)` | The `Location` an agent currently occupies, or `null` |
+| `agents_at(location)` | Agents currently at a given `Location` |
+| `nearby(agent, radius)` | Other agents within `radius` of this agent's position |
+
+### World and scale
+
+An optional `world { }` block declares a spatial layout procedurally, so a game
+doesn't hand-place coordinates for a large population:
+
+```
+world {
+  width: 200
+  height: 200
+  location Home   { tag: "private", count: 400 }
+  location Market { tag: "public", capacity: 200, count: 20 }
+}
+```
+
+Each `location <Type> { }` declares a *kind* of place — a tag, an optional capacity,
+and how many instances of it should exist. At sim start, the interpreter scatters that
+many concrete instances across the `width` x `height` grid using the same seeded RNG
+as everything else (seeded rejection-sampling with a minimum spacing, so instances
+don't stack), so placement is reproducible under `--seed` without the game author ever
+writing a coordinate. `Agent`s get `x`/`y`/`location` fields (all `null` until
+`spawn_agents_at`/`move_to` is called), and the spatial builtins above are how a
+program queries or changes them.
+
+This is also the enabling piece for large populations: SocialLang doesn't have (and
+doesn't need) a separate "scripted vs. LLM" tier as new syntax — a game already has
+everything required to express it with a plain `fn` and an `if` on role/team, since
+`role { count: 5000 }` and function calls were already in the language. `games/city.sl`
+demonstrates the pattern: 5,000 `Citizen` agents wander each round via an ordinary
+`fn` with zero LLM calls, while 50 `Journalist` agents are asked for a headline every
+round via `ask_choice_all` — which is the other scale-enabling piece: dispatching that
+batch's `provider.complete()` calls concurrently instead of serializing 50 sequential
+round trips. Running all 5,050 agents through a full game (`sociallang run
+games/city.sl --mock-only`) takes about a second. The other requirement at that scale
+was an engine fix, not a language feature: `_visible_events_for` used to do a full scan
+of the entire event log on every single `ask()` call (`O(agents x events)` per round,
+over a growing log); it's now backed by a per-agent public/private event index
+maintained incrementally as events are written, so it's `O(that agent's own visible
+event count)` instead.
 
 ### Roster and identity are not part of the language
 
@@ -204,15 +254,25 @@ changing `retrieve()`'s recency+importance+relevance formula shape.
 
 **Implemented:** lexer, parser, tree-walking interpreter; all three memory patterns
 above plus fully custom in-language ones; real embedding-based relevance and
-LLM-rated importance for `generative(k)` memory (see above); `sociallang/cli.py`
-(`run`, `schema`, `visualize`, `check`); an HTML replay visualizer
+LLM-rated importance for `generative(k)` memory (see above); an optional `world { }`
+block for procedural spatial layout, spatial builtins, and concurrent bulk-`ask`
+builtins for scaling a population into the thousands (see "World and scale" above);
+`sociallang/cli.py` (`run`, `schema`, `visualize`, `check`); an HTML replay visualizer
 (`sociallang/visualize.py`) with a public/private event timeline and agent roster;
 JSON schema export (`sociallang/schema_export.py`) — "export models and model
 patterns" for external tooling, i.e. a game's roles and memory patterns as plain
-JSON without parsing SocialLang. Two working example games. 46 tests covering the
-lexer, parser, interpreter semantics (including a deterministic vote-tally/eliminate
-test and a memory-windowing test), the native memory-retrieval math, the embedding
-providers, and schema export.
+JSON without parsing SocialLang. Three working example games (`mafia.sl`,
+`trust_game.sl`, `city.sl`). 55 tests covering the lexer, parser, interpreter
+semantics (including a deterministic vote-tally/eliminate test, a memory-windowing
+test, deterministic world generation, spatial builtins, and bulk-ask concurrency/
+ordering), the native memory-retrieval math, the embedding providers, and schema
+export.
+
+A live event-streaming bridge (so an external viewer — e.g. the in-progress Unity
+client under `unity/`, see its README) can watch a run as it happens instead of only
+reading the final JSON, plus that Unity client itself, are in progress — see the
+project's plan file / commit history for current status rather than treating this
+paragraph as authoritative for long.
 
 **Not implemented / open questions:**
 
@@ -225,3 +285,9 @@ providers, and schema export.
 - `visualize`'s HTML is intentionally plain (no charting, no filtering UI) — a fine
   target for the `dataviz`/`artifact-design` treatment later if this needs to be shown
   to someone rather than just read as a debug trace.
+- World generation is a single scatter pass (no terrain, no roads/connectivity, no
+  region-level structure) — fine for "thousands of agents need somewhere to be," not a
+  general procedural-map generator.
+- `ask_all`/`ask_choice_all` parallelize within one call, but a phase that calls `ask()`
+  in a loop instead (the old per-agent style, still fully supported) still serializes —
+  scaling a game's LLM tier requires actually using the bulk builtins.
