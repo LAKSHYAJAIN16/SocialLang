@@ -5,6 +5,7 @@ import json
 import os
 import random
 import sys
+import time
 
 from dotenv import load_dotenv
 
@@ -100,21 +101,36 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     logger = None if args.no_save else ResultsLogger(args.out)
 
-    for i in range(args.games):
-        seed = args.seed + i if args.seed is not None else None
-        agents, roles_by_name = assign_agents(sim, roster, random.Random(seed))
-        interp = Interpreter(
-            sim, agents, roles_by_name, seed=seed, embedder=embedder, importance_provider=importance_provider
-        )
-        result = interp.run(max_rounds=args.max_rounds)
+    sink = None
+    if args.live:
+        from .engine.live import WebSocketSink
 
-        print(
-            f"[run] game {i + 1}/{args.games}: winner={result['winner']} rounds={result['rounds']} "
-            f"agents={len(result['agents'])}"
-        )
-        if logger is not None:
-            run_id = logger.save_run(sim.name, i, result)
-            print(f"[run] saved: {os.path.join(args.out, run_id)}.json / .html")
+        sink = WebSocketSink(host=args.live_host, port=args.live_port)
+        print(f"[run] live bridge listening on ws://{args.live_host}:{args.live_port}")
+        if args.live_wait > 0:
+            print(f"[run] waiting {args.live_wait}s for a viewer to connect...")
+            time.sleep(args.live_wait)
+
+    try:
+        for i in range(args.games):
+            seed = args.seed + i if args.seed is not None else None
+            agents, roles_by_name = assign_agents(sim, roster, random.Random(seed))
+            interp = Interpreter(
+                sim, agents, roles_by_name, seed=seed, embedder=embedder,
+                importance_provider=importance_provider, sink=sink,
+            )
+            result = interp.run(max_rounds=args.max_rounds)
+
+            print(
+                f"[run] game {i + 1}/{args.games}: winner={result['winner']} rounds={result['rounds']} "
+                f"agents={len(result['agents'])}"
+            )
+            if logger is not None:
+                run_id = logger.save_run(sim.name, i, result)
+                print(f"[run] saved: {os.path.join(args.out, run_id)}.json / .html")
+    finally:
+        if sink is not None:
+            sink.close()
 
 
 def cmd_schema(args: argparse.Namespace) -> None:
@@ -178,6 +194,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--importance-model", default=None,
         help="roster key of the model that rates importance when --llm-importance is set "
              "(default: first available model in the roster)",
+    )
+    run_p.add_argument(
+        "--live", action="store_true",
+        help="stream every event over a local WebSocket bridge as the sim runs, for a live "
+             "viewer (e.g. unity/) instead of only reading the saved JSON afterwards",
+    )
+    run_p.add_argument("--live-host", default="localhost", help="live bridge bind host")
+    run_p.add_argument("--live-port", type=int, default=8765, help="live bridge port")
+    run_p.add_argument(
+        "--live-wait", type=float, default=3.0,
+        help="seconds to pause after opening the live bridge before the sim starts, so a "
+             "viewer has time to connect and not miss the opening world/agents snapshot",
     )
     run_p.set_defaults(func=cmd_run)
 

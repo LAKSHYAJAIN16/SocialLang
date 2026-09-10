@@ -177,10 +177,16 @@ class Interpreter:
         seed: int | None = None,
         embedder: Any = None,
         importance_provider: Any = None,
+        sink: Any = None,
     ):
         self.sim = sim
         self.agents = agents
         self.roles = roles_by_name
+        # Optional LiveSink (see sociallang/engine/live.py) -- duck-typed
+        # (emit_event/emit_agents_snapshot/emit_world/emit_done) so this module keeps
+        # no hard dependency on the engine package, same pattern as embedder/
+        # importance_provider above.
+        self.sink = sink
         self.events: list[Event] = []
         # Per-agent visibility index maintained incrementally in _append_event, so
         # _visible_events_for is O(that agent's own visible count) instead of O(total
@@ -245,6 +251,10 @@ class Interpreter:
     def run(self, max_rounds: int = 200) -> dict:
         if self.sim.loop is None:
             raise SLRuntimeError("sim has no `loop` block")
+        if self.sink is not None:
+            if self.world is not None:
+                self.sink.emit_world(self.world.width, self.world.height, self._world_snapshot())
+            self.sink.emit_agents_snapshot(self._agents_snapshot())
         winner = None
         for _ in range(max_rounds):
             self.round += 1
@@ -256,16 +266,29 @@ class Interpreter:
                 break
             except BreakSignal:
                 break
+            if self.sink is not None:
+                self.sink.emit_agents_snapshot(self._agents_snapshot())
+        if self.sink is not None:
+            self.sink.emit_done(winner, self.round)
         return {
             "winner": winner,
             "rounds": self.round,
             "log": self.run_log,
-            "agents": [
-                {"seat": a.seat, "role": a.role_name, "team": a.team, "model": a.model_key,
-                 "alive": a.alive, "death_cause": a.death_cause}
-                for a in self.agents
-            ],
+            "agents": self._agents_snapshot(),
         }
+
+    def _agents_snapshot(self) -> list[dict]:
+        return [
+            {"seat": a.seat, "role": a.role_name, "team": a.team, "model": a.model_key,
+             "alive": a.alive, "death_cause": a.death_cause, "x": a.x, "y": a.y, "location_id": a.location_id}
+            for a in self.agents
+        ]
+
+    def _world_snapshot(self) -> list[dict]:
+        return [
+            {"id": loc.id, "type": loc.type_name, "tag": loc.tag, "capacity": loc.capacity, "x": loc.x, "y": loc.y}
+            for loc in self.world_locations.values()
+        ]
 
     # -- statement execution --
 
@@ -486,10 +509,11 @@ class Interpreter:
         else:
             for seat in visible_to:
                 self._private_events.setdefault(seat, []).append(e)
-        self.run_log.append(
-            {"seq": e.seq, "round": e.round, "kind": kind, "text": text, "author": author,
-             "visible_to": sorted(visible_to) if visible_to else None}
-        )
+        entry = {"seq": e.seq, "round": e.round, "kind": kind, "text": text, "author": author,
+                 "visible_to": sorted(visible_to) if visible_to else None}
+        self.run_log.append(entry)
+        if self.sink is not None:
+            self.sink.emit_event(entry)
         return e
 
     @staticmethod
@@ -778,11 +802,12 @@ def run_source(
     max_rounds: int = 200,
     embedder: Any = None,
     importance_provider: Any = None,
+    sink: Any = None,
 ) -> dict:
     sim = parse(source)
     rng = random.Random(seed)
     agents, roles_by_name = assign_agents(sim, roster, rng)
     interp = Interpreter(
-        sim, agents, roles_by_name, seed=seed, embedder=embedder, importance_provider=importance_provider
+        sim, agents, roles_by_name, seed=seed, embedder=embedder, importance_provider=importance_provider, sink=sink
     )
     return interp.run(max_rounds=max_rounds)
