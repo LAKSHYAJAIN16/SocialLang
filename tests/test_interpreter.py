@@ -115,6 +115,32 @@ def test_mafia_sl_runs_to_completion_with_mock_provider():
     assert result["rounds"] >= 1
 
 
+def test_village_sl_runs_to_completion_with_mock_provider():
+    from sociallang.providers.mock_provider import MockProvider
+
+    roster = {f"mock-{i}": (None, MockProvider("mock", None)) for i in range(8)}
+    result = run_source(_load("village.sl"), roster, seed=2, max_rounds=30)
+    assert result["winner"] in ("town", "wolf")
+    assert result["rounds"] >= 1
+    # spawn_agents_at ran during Settle, so every agent should have a position by now.
+    assert all(a["x"] is not None and a["y"] is not None for a in result["agents"])
+
+
+def test_outbreak_sl_runs_to_completion_with_mock_provider():
+    import time
+
+    from sociallang.providers.mock_provider import MockProvider
+
+    roster = {"mock-random": (None, MockProvider("mock", None))}
+    t0 = time.perf_counter()
+    result = run_source(_load("outbreak.sl"), roster, seed=0, max_rounds=10)
+    elapsed = time.perf_counter() - t0
+
+    assert result["winner"] in ("contained", "outbreak")
+    assert len(result["agents"]) == 620
+    assert elapsed < 20.0
+
+
 def test_city_sl_runs_a_large_spatial_population_quickly_with_mock_provider():
     import time
 

@@ -75,11 +75,16 @@ sim Mafia {
 }
 ```
 
-The full worked examples are `games/mafia.sl` (a complete Mafia implementation),
+The worked examples: `games/mafia.sl` (a complete Mafia implementation),
 `games/trust_game.sl` (a structurally different game — no hidden roles, no elimination,
-just repeated cooperate/defect rounds with a round-count win condition), and
-`games/city.sl` (a spatial, 5,050-agent demo — see "World and scale" below) — proof the
-language isn't accidentally Mafia-shaped, or small-population-shaped.
+just repeated cooperate/defect rounds with a round-count win condition),
+`games/city.sl` (a spatial, 5,050-agent demo — see "World and scale" below),
+`games/village.sl` (hidden-role social deduction combined with a `world {}` — wolves
+plan in a private Den, the village votes at a public Plaza, location gates who
+actually hears the night chatter), and `games/outbreak.sl` (a 620-agent spatial
+contagion sim where a 100-agent LLM tier votes on a lockdown policy each round via
+`ask_choice_all`, and the vote's outcome measurably changes how far the "infection"
+spreads) — proof the language isn't accidentally Mafia-shaped, or small-population-shaped.
 
 ### Grammar
 
@@ -104,7 +109,10 @@ Statements: `let`, plain assignment (`x = ...`, `d[k] = ...`), `if`/`else if`/`e
 `while`, `for x in <expr>`, `return`, `break`, `run <phase>`, and bare expression calls.
 Expressions: numbers, strings, `true`/`false`/`null`, list `[...]` and dict `{k: v}`
 literals, `and`/`or`/`not`, comparisons, arithmetic, `.attr` access, `[index]`, and
-function calls with positional and `name=value` keyword arguments. `+` concatenates two
+function calls with positional and `name=value` keyword arguments. `.attr` accepts any
+word after the dot, including reserved ones like `role` — `agent.role` works the same
+way `role`-as-a-role-decl-field-name already did, since an attribute name right after
+`.` is never ambiguous with the keyword's other meaning. `+` concatenates two
 strings or adds two numbers; concatenating a string with anything else needs an explicit
 `str(x)` first.
 
@@ -119,6 +127,7 @@ strings or adds two numbers; concatenating a string with anything else needs an 
 | `remember(agent, text)` | Adds a private note to one agent's own memory |
 | `reflect(agent)` | Asks the agent to synthesize 1-3 insights from its retrieved memory (see below); returns them and also stores them as new, high-importance memories |
 | `alive()` | List of currently-alive agents |
+| `all_agents()` | Every agent, alive or not — the raw roster (`agents` itself can't be referenced as an expression; it's a reserved top-level field keyword, so this is how a script gets the full, unfiltered list) |
 | `with_role(name)` | List of agents (alive or not) holding that role |
 | `team_of(agent)` | That agent's role's team string |
 | `eliminate(agent, cause=)` | Marks an agent dead and broadcasts it |
@@ -261,18 +270,18 @@ builtins for scaling a population into the thousands (see "World and scale" abov
 (`sociallang/visualize.py`) with a public/private event timeline and agent roster;
 JSON schema export (`sociallang/schema_export.py`) — "export models and model
 patterns" for external tooling, i.e. a game's roles and memory patterns as plain
-JSON without parsing SocialLang. Three working example games (`mafia.sl`,
-`trust_game.sl`, `city.sl`). 55 tests covering the lexer, parser, interpreter
-semantics (including a deterministic vote-tally/eliminate test, a memory-windowing
-test, deterministic world generation, spatial builtins, and bulk-ask concurrency/
-ordering), the native memory-retrieval math, the embedding providers, and schema
-export.
+JSON without parsing SocialLang. Five working example games (`mafia.sl`,
+`trust_game.sl`, `city.sl`, `village.sl`, `outbreak.sl`). 61 tests covering the lexer,
+parser, interpreter semantics (including a deterministic vote-tally/eliminate test, a
+memory-windowing test, deterministic world generation, spatial builtins, bulk-ask
+concurrency/ordering, and the live WebSocket bridge end to end), the native
+memory-retrieval math, the embedding providers, and schema export.
 
-A live event-streaming bridge (so an external viewer — e.g. the in-progress Unity
-client under `unity/`, see its README) can watch a run as it happens instead of only
-reading the final JSON, plus that Unity client itself, are in progress — see the
-project's plan file / commit history for current status rather than treating this
-paragraph as authoritative for long.
+A live event-streaming bridge (`sociallang/engine/live.py`, `sociallang run --live`)
+lets an external viewer watch a run as it happens instead of only reading the final
+JSON — see its module docstring for the WebSocket message schema. A Unity client that
+consumes it is in progress under `unity/`; see that directory's README for current
+status rather than treating this paragraph as authoritative for long.
 
 **Not implemented / open questions:**
 

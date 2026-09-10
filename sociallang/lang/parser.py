@@ -319,7 +319,14 @@ class Parser:
         expr = self._parse_primary()
         while True:
             if self._match("SYMBOL", "."):
-                name = self._expect("IDENT").value
+                # Right after '.', any word is unambiguously an attribute name -- so a
+                # reserved word like "role" (e.g. `a.role`) works the same as it already
+                # does as a role-decl field name, instead of colliding with the `role`
+                # top-level keyword.
+                tok = self._peek()
+                if tok.kind not in ("IDENT", "KEYWORD"):
+                    raise ParseError(f"line {tok.line}: expected an attribute name after '.', got {tok.value!r}")
+                name = self._advance().value
                 expr = Attr(expr, name)
             elif self._match("SYMBOL", "("):
                 args: list[Expr] = []

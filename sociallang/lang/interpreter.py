@@ -780,6 +780,7 @@ class Interpreter:
             "remember": lambda a, k: self._bi_remember(a),
             "reflect": lambda a, k: self._bi_reflect(a),
             "alive": lambda a, k: [ag for ag in self.agents if ag.alive],
+            "all_agents": lambda a, k: list(self.agents),
             "with_role": lambda a, k: [ag for ag in self.agents if ag.role_name == a[0]],
             "team_of": lambda a, k: a[0].team,
             "eliminate": lambda a, k: self._bi_eliminate(a, k),

@@ -40,6 +40,27 @@ def test_parses_city_sl_end_to_end_with_a_world_block():
     assert role_counts == {"Citizen": 5000, "Journalist": 50}
 
 
+def test_parses_village_sl_end_to_end():
+    sim = parse(_load("village.sl"))
+    assert sim.name == "Village"
+    role_names = {r.name for r in sim.roles}
+    assert role_names == {"Wolf", "Seer", "Villager"}
+    assert sim.world is not None
+    location_names = {lt.name for lt in sim.world.location_types}
+    assert location_names == {"Plaza", "Den", "House"}
+    phase_names = {p.name for p in sim.phases}
+    assert phase_names == {"Settle", "Night", "Day"}
+
+
+def test_parses_outbreak_sl_end_to_end():
+    sim = parse(_load("outbreak.sl"))
+    assert sim.name == "Outbreak"
+    role_counts = {r.name: r.count for r in sim.roles}
+    assert role_counts == {"Resident": 500, "PatientZero": 20, "Official": 100}
+    assert sim.world is not None
+    assert sim.world.width == 150 and sim.world.height == 150
+
+
 def test_role_remainder_count_parses_as_none():
     sim = parse(_load("mafia.sl"))
     villager = next(r for r in sim.roles if r.name == "Villager")
