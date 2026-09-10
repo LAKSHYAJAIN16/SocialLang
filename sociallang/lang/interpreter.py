@@ -280,6 +280,10 @@ class Interpreter:
             "rounds": self.round,
             "log": self.run_log,
             "agents": self._agents_snapshot(),
+            "world": (
+                {"width": self.world.width, "height": self.world.height, "locations": self._world_snapshot()}
+                if self.world is not None else None
+            ),
         }
 
     def _agents_snapshot(self) -> list[dict]:
