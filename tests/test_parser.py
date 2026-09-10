@@ -29,6 +29,17 @@ def test_parses_trust_game_sl_end_to_end():
     assert sim.fns[0].name == "other"
 
 
+def test_parses_city_sl_end_to_end_with_a_world_block():
+    sim = parse(_load("city.sl"))
+    assert sim.name == "City"
+    assert sim.world is not None
+    assert sim.world.width == 200 and sim.world.height == 200
+    location_names = {lt.name for lt in sim.world.location_types}
+    assert location_names == {"Home", "Market", "Plaza"}
+    role_counts = {r.name: r.count for r in sim.roles}
+    assert role_counts == {"Citizen": 5000, "Journalist": 50}
+
+
 def test_role_remainder_count_parses_as_none():
     sim = parse(_load("mafia.sl"))
     villager = next(r for r in sim.roles if r.name == "Villager")

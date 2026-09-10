@@ -115,6 +115,26 @@ def test_mafia_sl_runs_to_completion_with_mock_provider():
     assert result["rounds"] >= 1
 
 
+def test_city_sl_runs_a_large_spatial_population_quickly_with_mock_provider():
+    import time
+
+    from sociallang.providers.mock_provider import MockProvider
+
+    roster = {"mock-random": (None, MockProvider("mock", None))}
+    t0 = time.perf_counter()
+    result = run_source(_load("city.sl"), roster, seed=0, max_rounds=5)
+    elapsed = time.perf_counter() - t0
+
+    assert result["winner"] == "done"
+    assert result["rounds"] == 3
+    assert len(result["agents"]) == 5050
+    # 5050 agents (5000 scripted + 50 concurrent-LLM-tier) over 3 rounds is the
+    # regression guard for the O(agents x events)->O(agent's own visible count)
+    # visibility-index fix and the thread-pooled ask_choice_all -- this used to be
+    # quadratic in event-log size and serial per LLM call.
+    assert elapsed < 15.0
+
+
 def test_generative_memory_pattern_uses_the_configured_embedder():
     from sociallang.providers.embeddings import HashEmbeddingProvider
 
