@@ -60,6 +60,23 @@ namespace SocialLangViewer
                 hub.state.Apply(worldMsg);
             }
 
+            // Applied BEFORE the log pacing loop below, not after -- a saved run only
+            // has final agent positions (see the class doc comment), so the honest
+            // way to show that is agents visible at their end-of-run spot for the
+            // whole replay, not an empty map until the last coroutine step. Applying
+            // this last would leave SimulationState.Agents empty (and every renderer/
+            // the inspector reading it finding nothing) for the entire scrolling
+            // phase on any run with more than a handful of events.
+            if (root["agents"] is JArray agentsToken)
+            {
+                var snapshot = new EventMsg
+                {
+                    type = "agents_snapshot",
+                    agents = agentsToken.ToObject<List<AgentState>>(),
+                };
+                hub.state.Apply(snapshot);
+            }
+
             float delay = eventsPerSecond > 0f ? 1f / eventsPerSecond : 0f;
             if (root["log"] is JArray log)
             {
@@ -70,16 +87,6 @@ namespace SocialLangViewer
                     hub.state.Apply(msg);
                     if (delay > 0f) yield return new WaitForSeconds(delay);
                 }
-            }
-
-            if (root["agents"] is JArray agentsToken)
-            {
-                var snapshot = new EventMsg
-                {
-                    type = "agents_snapshot",
-                    agents = agentsToken.ToObject<List<AgentState>>(),
-                };
-                hub.state.Apply(snapshot);
             }
 
             var doneMsg = new EventMsg

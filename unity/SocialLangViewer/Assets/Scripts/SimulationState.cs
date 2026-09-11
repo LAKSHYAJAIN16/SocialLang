@@ -119,6 +119,16 @@ namespace SocialLangViewer
                     break;
 
                 case "agents_snapshot":
+                    // Every agents_snapshot is the COMPLETE current roster (see
+                    // Interpreter._agents_snapshot() on the Python side -- it always
+                    // builds from the full self.agents list, never a delta), so this
+                    // has to replace, not merge. `sociallang run --games N --live`
+                    // reuses one WebSocketSink across multiple interp.run() calls
+                    // (cli.py), and a role like `agents: 6..10` redraws a different
+                    // population size each game -- merging without clearing would
+                    // leave a previous game's now-nonexistent seats frozen in here
+                    // forever, rendered/tracked alongside the current game's roster.
+                    Agents.Clear();
                     if (msg.agents != null)
                     {
                         foreach (var a in msg.agents) Agents[a.seat] = a;
