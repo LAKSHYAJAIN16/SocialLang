@@ -287,6 +287,13 @@ since a saved run doesn't persist a snapshot per round). That client compiles cl
 against a stubbed Unity API (see the README) but hasn't been opened in a real Editor
 yet — treat "does it actually run" as open until someone does that.
 
+`web/index.html` is a separate, hand-maintained JavaScript port of the lexer/parser/
+interpreter/memory-retrieval logic (not the live bridge or Unity's renderer) — a
+self-contained browser IDE with all five example games embedded, a mock LLM provider
+standing in for real ones (a public page can't hold API keys), and a tutorial panel.
+It's a full reimplementation, not a thin wrapper around the Python code, so a future
+language change needs to be ported there by hand too; see `web/README.md`.
+
 **Not implemented / open questions:**
 
 - No static type checking or line-number-aware error recovery beyond "first parse error
