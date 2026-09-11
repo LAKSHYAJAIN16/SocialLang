@@ -455,7 +455,7 @@ class Interpreter:
         if isinstance(obj, Agent):
             mapping = {
                 "seat": obj.seat, "role": obj.role_name, "team": obj.team,
-                "alive": obj.alive, "model": obj.model_key,
+                "alive": obj.alive, "model": obj.model_key, "death_cause": obj.death_cause,
                 "x": obj.x, "y": obj.y, "location": self.world_locations.get(obj.location_id),
             }
         elif isinstance(obj, Event):

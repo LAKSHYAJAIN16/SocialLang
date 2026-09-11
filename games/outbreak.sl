@@ -78,13 +78,22 @@ sim Outbreak {
       }
     }
 
+    // Only agents infected before this round's spread began act as spreaders --
+    // eliminate() mutates the same live Agent objects all_agents() iterates over,
+    // so without the "not infected this round" guard, an agent infected earlier
+    // in this very loop could immediately spread further within the same round
+    // (order-dependent on --seed), instead of the intended one-hop-per-round
+    // model. death_cause doubles as that guard: it's stamped with the round an
+    // infection happened, and "index case" (Setup's seed infections) always
+    // counts as prior.
+    let this_round_tag = "infected@" + str(round)
     for a in all_agents() {
-      if a.role != "Official" and not a.alive {
+      if a.role != "Official" and not a.alive and a.death_cause != this_round_tag {
         let close = nearby(a, radius)
         for c in close {
           if c.alive and c.role != "Official" {
             if random_choice([true, false, false, false, false, false]) {
-              eliminate(c, "infected")
+              eliminate(c, this_round_tag)
             }
           }
         }
