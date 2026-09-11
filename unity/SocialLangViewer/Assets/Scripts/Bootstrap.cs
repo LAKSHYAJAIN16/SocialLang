@@ -26,17 +26,28 @@ namespace SocialLangViewer
             GameObject hubGo = new GameObject("SocialLangViewer");
             var hub = hubGo.AddComponent<SimulationHub>();
 
-            if (Camera.main == null)
+            // Configure whatever camera is already tagged MainCamera (Unity's own
+            // default new-scene template ships with one) rather than only building
+            // our own when none exists -- otherwise the common case (pressing Play
+            // in the default sample scene) silently skips orthographic/pan-zoom
+            // setup entirely, breaking click-to-select under a leftover perspective
+            // camera.
+            Camera cam = Camera.main;
+            if (cam == null)
             {
                 GameObject camGo = new GameObject("Main Camera");
                 camGo.tag = "MainCamera";
-                var cam = camGo.AddComponent<Camera>();
-                cam.orthographic = true;
-                cam.orthographicSize = 50f;
-                cam.backgroundColor = new Color(0.08f, 0.08f, 0.1f);
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                camGo.transform.position = new Vector3(0f, 0f, -10f);
-                camGo.AddComponent<SimulationCameraController>();
+                cam = camGo.AddComponent<Camera>();
+            }
+            cam.orthographic = true;
+            cam.orthographicSize = 50f;
+            cam.backgroundColor = new Color(0.08f, 0.08f, 0.1f);
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            Vector3 pos = cam.transform.position;
+            cam.transform.position = new Vector3(pos.x, pos.y, -10f);
+            if (cam.GetComponent<SimulationCameraController>() == null)
+            {
+                cam.gameObject.AddComponent<SimulationCameraController>();
             }
 
             GameObject worldGo = new GameObject("WorldRenderer");

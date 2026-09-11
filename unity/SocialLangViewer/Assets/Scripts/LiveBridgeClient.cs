@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -64,12 +65,17 @@ namespace SocialLangViewer
         private async Task ReceiveLoop(CancellationToken token)
         {
             var buffer = new byte[8192];
-            var sb = new StringBuilder();
+            // Buffer raw bytes and decode once the full message is assembled, not
+            // per network fragment -- a multi-byte UTF-8 character (accented
+            // letters, emoji in agent dialogue) can straddle a ReceiveAsync
+            // boundary, and decoding each chunk independently corrupts it into a
+            // U+FFFD replacement character at the split point.
+            var messageBytes = new List<byte>();
             try
             {
                 while (_socket != null && _socket.State == WebSocketState.Open && !token.IsCancellationRequested)
                 {
-                    sb.Clear();
+                    messageBytes.Clear();
                     WebSocketReceiveResult result;
                     do
                     {
@@ -79,10 +85,10 @@ namespace SocialLangViewer
                             Debug.Log("[LiveBridgeClient] server closed the connection");
                             return;
                         }
-                        sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                        for (int i = 0; i < result.Count; i++) messageBytes.Add(buffer[i]);
                     } while (!result.EndOfMessage);
 
-                    var json = sb.ToString();
+                    var json = Encoding.UTF8.GetString(messageBytes.ToArray());
                     try
                     {
                         var msg = JsonConvert.DeserializeObject<EventMsg>(json);
