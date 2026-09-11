@@ -5,7 +5,8 @@ parser, and interpreter to JavaScript so you can write and run a `.sl` program
 entirely client-side — no Python, no server, no API keys. It's a faithful port of
 `sociallang/lang/{lexer,parser,interpreter,memory}.py`: same grammar, same builtins,
 same event/memory semantics (including `world {}` and the bulk `ask_all`/
-`ask_choice_all` builtins).
+`ask_choice_all` builtins). A `world {}` case also gets a live Sandbox map with
+draggable location markers, instead of only a text log.
 
 Open it directly:
 
@@ -31,9 +32,14 @@ Also published as a Claude Artifact for quick sharing — same file, hosted.
   to parallelize against a synchronous in-page mock provider. The Python
   implementation's thread-pooled concurrency (see DESIGN.md) is what actually matters
   for real API latency at scale.
-- **No spatial rendering.** `world {}` positions are computed exactly as the real
-  interpreter computes them, but this page is a text console, not a map — see the
-  repo's `unity/` viewer for that.
+- **The Sandbox map is a rougher approximation than Unity's.** A `world {}` case
+  renders as a live 2D canvas (Smallville-style, per Park et al. 2023's demo) with
+  draggable location markers — dragging one before Run actually changes gameplay,
+  since `nearby()`/`move_to()`/`agents_at()` all read from the same layout Run uses.
+  After a run, scrub or Play through the captured per-round agent snapshots. This is
+  a simpler, canvas-only version of what `unity/` does for a live/real-model run —
+  no 3D, no camera controls beyond the implicit pan-free fixed view, and only as many
+  animation frames as rounds actually completed (coarser than Unity's live stream).
 
 ## Files
 

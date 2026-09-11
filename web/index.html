@@ -114,8 +114,9 @@
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
   /* ---------- main grid ---------- */
-  main { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; align-items: stretch; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  main { display: flex; flex-direction: column; gap: 18px; }
+  .lower-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; align-items: stretch; }
+  @media (max-width: 900px) { .lower-grid { grid-template-columns: 1fr; } }
 
   .panel {
     background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
@@ -206,6 +207,65 @@
   }
   .log-empty { padding: 20px 14px; color: var(--ink-dim); font-size: 13px; }
 
+  /* ---------- sandbox (live spatial map) ---------- */
+  .sandbox-panel .panel-head { flex-wrap: wrap; row-gap: 8px; }
+  .sandbox-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .sandbox-btn {
+    height: 26px; padding: 0 10px; border-radius: 6px; cursor: pointer;
+    background: var(--surface); color: var(--ink); border: 1px solid var(--line);
+    font: 600 11px/1 var(--font-body); letter-spacing: 0.02em;
+  }
+  .sandbox-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .sandbox-btn:disabled { opacity: 0.45; cursor: default; border-color: var(--line); color: var(--ink-dim); }
+  .sandbox-legend { display: flex; flex-wrap: wrap; gap: 8px; font: 500 11px/1 var(--font-body); color: var(--ink-dim); }
+  .sandbox-legend .swatch { display: inline-flex; align-items: center; gap: 4px; }
+  .sandbox-legend .swatch::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--ink-dim)); display: inline-block; }
+
+  .sandbox-stage-wrap {
+    position: relative; width: 100%; aspect-ratio: 1 / 1; max-height: min(60vh, 620px);
+    margin-inline: auto; background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 40px 40px,
+      var(--surface-2);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden; touch-action: none;
+  }
+  #sandbox-canvas { display: block; width: 100%; height: 100%; }
+  #sandbox-canvas.dragging, #sandbox-canvas.draggable { cursor: grab; }
+  #sandbox-canvas.dragging { cursor: grabbing; }
+
+  .sandbox-empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; color: var(--ink-dim); font-size: 13px; line-height: 1.6;
+  }
+  /* Don't rely solely on a host page's own [hidden]{display:none!important} reset --
+     an unconditional `display: flex` above has equal specificity to the browser's
+     default (non-important) [hidden] UA rule, and author styles win ties, so this
+     would otherwise stay visible outside a wrapper that force-overrides it. */
+  .sandbox-empty[hidden] { display: none; }
+  .sandbox-empty strong { color: var(--ink); }
+
+  .sandbox-inspector {
+    position: absolute; top: 10px; right: 10px; max-width: 220px; padding: 10px 12px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 2px 8px var(--shadow); font: 500 12px/1.55 var(--font-mono); color: var(--ink);
+  }
+  .sandbox-inspector .close-btn {
+    float: right; cursor: pointer; color: var(--ink-dim); font-family: var(--font-body);
+    background: none; border: none; font-size: 13px; line-height: 1; padding: 0 0 0 8px;
+  }
+  .sandbox-inspector h4 { margin: 0 0 4px; font: 700 12.5px/1 var(--font-mono); }
+  .sandbox-inspector .ev { color: var(--ink-dim); font-size: 11px; margin-top: 2px; }
+
+  .sandbox-playback {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    border-top: 1px solid var(--line); background: var(--surface-2);
+  }
+  .sandbox-playback input[type="range"] { flex: 1 1 auto; accent-color: var(--accent); }
+  .sandbox-playback .round-label {
+    font: 600 11.5px/1 var(--font-mono); color: var(--ink-dim); min-width: 8ch; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
   /* ---------- field manual (tutorial) ---------- */
   .manual { padding: 16px 18px 24px; font-size: 13.5px; line-height: 1.65; }
   .manual h3 {
@@ -247,7 +307,7 @@
     <div class="brand">
       <span class="kicker">Field terminal &middot; est. procedurally</span>
       <h1>SocialLang Precinct</h1>
-      <p>Write and run a SocialLang program right here &mdash; its lexer, parser, and interpreter, ported line-for-line, running entirely in this tab. No server, no API keys: LLM calls are answered by a mock agent so every case still closes.</p>
+      <p>Write and run a SocialLang program right here &mdash; its lexer, parser, and interpreter, ported line-for-line, running entirely in this tab. Spatial cases get a live map you can drag location markers around on before running. No server, no API keys: LLM calls are answered by a mock agent so every case still closes.</p>
     </div>
     <div class="controls">
       <div class="field">
@@ -264,33 +324,58 @@
   </header>
 
   <main>
-    <section class="panel">
+    <section class="panel sandbox-panel">
       <div class="panel-head">
-        <h2>Case File &mdash; editor</h2>
-        <span class="hint" id="line-count">0 lines</span>
-      </div>
-      <div class="editor-body">
-        <div class="gutter" id="gutter">1</div>
-        <div class="editor-stack">
-          <pre class="editor-highlight" id="highlight"><code></code></pre>
-          <textarea class="editor-input" id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+        <h2>Sandbox &mdash; live map</h2>
+        <div class="sandbox-controls">
+          <span class="sandbox-legend" id="sandbox-legend"></span>
+          <button class="sandbox-btn" id="randomize-layout-btn" title="Draw a new random layout at the current seed">Randomize layout</button>
+          <button class="sandbox-btn" id="reset-layout-btn" title="Discard drags, back to the last randomized/loaded layout">Reset drags</button>
         </div>
       </div>
+      <div class="sandbox-stage-wrap">
+        <canvas id="sandbox-canvas"></canvas>
+        <div class="sandbox-empty" id="sandbox-empty">
+          <span>This case has no <strong>world {}</strong> block &mdash; nothing to place. Pick <strong>village.sl</strong>, <strong>city.sl</strong>, or <strong>outbreak.sl</strong> above for a spatial one.</span>
+        </div>
+        <div class="sandbox-inspector" id="sandbox-inspector" hidden></div>
+      </div>
+      <div class="sandbox-playback">
+        <button class="sandbox-btn" id="play-btn">&#9656; Play</button>
+        <input type="range" id="round-scrubber" min="0" max="0" value="0" step="1" disabled>
+        <span class="round-label" id="round-label">no run yet</span>
+      </div>
     </section>
 
-    <section class="panel">
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="log">Case Log</button>
-        <button class="tab-btn" data-tab="manual">Field Manual</button>
-      </div>
+    <div class="lower-grid">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Case File &mdash; editor</h2>
+          <span class="hint" id="line-count">0 lines</span>
+        </div>
+        <div class="editor-body">
+          <div class="gutter" id="gutter">1</div>
+          <div class="editor-stack">
+            <pre class="editor-highlight" id="highlight"><code></code></pre>
+            <textarea class="editor-input" id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+          </div>
+        </div>
+      </section>
 
-      <div class="tab-panel" data-panel="log">
-        <div class="roster" id="roster"></div>
-        <div class="log" id="log"><div class="log-empty">Press Run to play this case.</div></div>
-      </div>
+      <section class="panel">
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="log">Case Log</button>
+          <button class="tab-btn" data-tab="manual">Field Manual</button>
+        </div>
 
-      <div class="tab-panel" data-panel="manual" hidden></div>
-    </section>
+        <div class="tab-panel" data-panel="log">
+          <div class="roster" id="roster"></div>
+          <div class="log" id="log"><div class="log-empty">Press Run to play this case.</div></div>
+        </div>
+
+        <div class="tab-panel" data-panel="manual" hidden></div>
+      </section>
+    </div>
   </main>
 
   <footer>
@@ -793,6 +878,40 @@ function assignAgents(sim, roster, rng) {
   return { agents, rolesByName };
 }
 
+// Free functions (not Interpreter methods) so the Sandbox UI can preview/edit a
+// world's layout before a run even starts, using the exact same placement logic
+// the interpreter itself uses -- one source of truth, no risk of the preview
+// drifting from what actually happens when you hit Run.
+function scatterPoint(placed, w, h, rng, minSpacing = 1.0, maxAttempts = 20) {
+  if (w <= 0 || h <= 0) return [0.0, 0.0];
+  const spacing2 = minSpacing * minSpacing;
+  for (let a = 0; a < maxAttempts; a += 1) {
+    const x = rng.uniform(0, w), y = rng.uniform(0, h);
+    let ok = true;
+    for (const loc of placed.values()) { const dx = x - loc.x, dy = y - loc.y; if (dx * dx + dy * dy < spacing2) { ok = false; break; } }
+    if (ok) return [x, y];
+  }
+  return [rng.uniform(0, w), rng.uniform(0, h)];
+}
+
+function setupWorldLocations(worldDecl, rng) {
+  const locations = new Map();
+  const seenNames = new Set();
+  const { width: w, height: h, locationTypes } = worldDecl;
+  for (const lt of locationTypes) {
+    if (seenNames.has(lt.name)) {
+      throw new SLRuntimeError(`world { }: duplicate location type '${lt.name}' -- location type names must be unique (their instances share an id prefix, so a second declaration silently overwrites the first)`);
+    }
+    seenNames.add(lt.name);
+    for (let i = 0; i < lt.count; i += 1) {
+      const locId = `${lt.name}_${i}`;
+      const [x, y] = scatterPoint(locations, w, h, rng);
+      locations.set(locId, new Location(locId, lt.name, lt.tag, lt.capacity, x, y));
+    }
+  }
+  return locations;
+}
+
 class Interpreter {
   constructor(sim, agents, rolesByName, opts = {}) {
     this.sim = sim; this.agents = agents; this.roles = rolesByName;
@@ -806,30 +925,15 @@ class Interpreter {
     this.globalEnv = new Env();
     this.globalEnv.define("agents", this.agents.slice());
     this.builtins = this._makeBuiltins();
-    this.world = sim.world; this.worldLocations = new Map();
-    if (this.world) this._setupWorld();
-  }
-
-  _setupWorld() {
-    const { width: w, height: h, locationTypes } = this.world;
-    for (const lt of locationTypes) {
-      for (let i = 0; i < lt.count; i += 1) {
-        const locId = `${lt.name}_${i}`;
-        const [x, y] = this._scatterPoint(w, h);
-        this.worldLocations.set(locId, new Location(locId, lt.name, lt.tag, lt.capacity, x, y));
-      }
-    }
-  }
-  _scatterPoint(w, h, minSpacing = 1.0, maxAttempts = 20) {
-    if (w <= 0 || h <= 0) return [0.0, 0.0];
-    const spacing2 = minSpacing * minSpacing;
-    for (let a = 0; a < maxAttempts; a += 1) {
-      const x = this.rng.uniform(0, w), y = this.rng.uniform(0, h);
-      let ok = true;
-      for (const loc of this.worldLocations.values()) { const dx = x - loc.x, dy = y - loc.y; if (dx * dx + dy * dy < spacing2) { ok = false; break; } }
-      if (ok) return [x, y];
-    }
-    return [this.rng.uniform(0, w), this.rng.uniform(0, h)];
+    this.world = sim.world;
+    // opts.worldLocations lets a caller (the Sandbox UI, after the user drags
+    // markers around) override the procedurally-scattered layout with specific
+    // positions -- everything downstream (nearby(), move_to(), agents_at()) just
+    // reads from this.worldLocations either way, so a dragged layout genuinely
+    // changes gameplay, not just the picture.
+    this.worldLocations = opts.worldLocations
+      ? new Map(opts.worldLocations)
+      : (this.world ? setupWorldLocations(this.world, this.rng) : new Map());
   }
 
   run(maxRounds = 200, onProgress = null) {
@@ -1223,11 +1327,13 @@ function runSource(source, roster, opts = {}) {
   // (which varies with population size), instead of only on `seed`.
   const assignRng = opts.rng || new SeededRandom(opts.seed);
   const { agents, rolesByName } = assignAgents(sim, roster, assignRng);
-  const interp = new Interpreter(sim, agents, rolesByName, { seed: opts.seed, sink: opts.sink });
+  const interp = new Interpreter(sim, agents, rolesByName, {
+    seed: opts.seed, sink: opts.sink, worldLocations: opts.worldLocations,
+  });
   return { interp, result: interp.run(opts.maxRounds || 200, opts.onProgress) };
 }
 
-global.SocialLang = { tokenize, parse, LexError, ParseError, SLRuntimeError, Interpreter, Agent, Location, EventRec, assignAgents, runSource, SeededRandom, MockProvider };
+global.SocialLang = { tokenize, parse, LexError, ParseError, SLRuntimeError, Interpreter, Agent, Location, EventRec, assignAgents, runSource, SeededRandom, MockProvider, setupWorldLocations };
 
 })(window);
 </script>
@@ -1332,6 +1438,7 @@ function onEditorInput() {
   highlightEl.innerHTML = highlightSL(editor.value);
   refreshGutter();
   syncScroll();
+  refreshWorldPreview(false);
   try { localStorage.setItem("sociallang-ide-state", JSON.stringify({ example: exampleSelect.value, code: editor.value })); } catch (_) { /* private browsing, etc. */ }
 }
 
@@ -1356,7 +1463,10 @@ editor.addEventListener("keydown", (e) => {
 exampleSelect.addEventListener("change", () => {
   editor.value = b64ToText(EXAMPLE_SOURCE[exampleSelect.value]);
   onEditorInput();
+  refreshWorldPreview(true);
 });
+
+seedInput.addEventListener("input", () => refreshWorldPreview(true));
 
 // ---------------------------------------------------------------------------
 // Tabs
@@ -1438,6 +1548,318 @@ function renderError(err) {
   rosterEl.innerHTML = "";
 }
 
+// ---------------------------------------------------------------------------
+// Sandbox: live spatial map + drag-and-drop world layout. Dragging a location
+// marker genuinely changes gameplay, not just the picture -- Run uses whatever
+// is currently on the canvas (see runCurrent's `worldLocations` override),
+// and nearby()/move_to()/agents_at() all read positions from the exact same
+// worldLocations map.
+// ---------------------------------------------------------------------------
+
+const sandboxCanvas = document.getElementById("sandbox-canvas");
+const sandboxEmptyEl = document.getElementById("sandbox-empty");
+const sandboxInspectorEl = document.getElementById("sandbox-inspector");
+const sandboxLegendEl = document.getElementById("sandbox-legend");
+const playBtn = document.getElementById("play-btn");
+const roundScrubber = document.getElementById("round-scrubber");
+const roundLabel = document.getElementById("round-label");
+const randomizeLayoutBtn = document.getElementById("randomize-layout-btn");
+const resetLayoutBtn = document.getElementById("reset-layout-btn");
+
+let currentSimWorld = null;          // the current parse's sim.world, or null if this case has none
+let baseWorldLayout = new Map();     // last randomized/loaded layout (pristine Location clones)
+let currentWorldLayout = new Map();  // possibly user-dragged; this is what Run actually uses
+let lastWorldSignature = null;
+let worldSeedNonce = 0;
+
+let roundFrames = [];   // one agents-snapshot array per captured round, from sink.onAgents
+let currentFrameIndex = 0;
+let playing = false;
+let playTimer = null;
+let selectedAgentSeat = null;
+let draggingLocId = null;
+let hoverLocId = null;
+let lastRunResult = null;
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+// Canvas fillStyle does not resolve var() references (it's not a CSS cascade
+// context), so team/tag colors have to be read down to a literal value here --
+// unlike the DOM roster chips / log author spans, which can just write
+// `style="--dot:var(--danger)"` directly.
+function resolvedTeamColor(team) {
+  const ref = teamColor(team); // "var(--danger)" -- same palette assignment as the roster/log
+  return cssVar(ref.slice(4, -1));
+}
+
+const TAG_PALETTE = ["--hue-6", "--hue-5", "--hue-4", "--safe", "--danger", "--accent"];
+const tagColors = new Map();
+function tagColorVarName(tag) {
+  if (!tag) return "--ink-dim";
+  if (!tagColors.has(tag)) tagColors.set(tag, TAG_PALETTE[tagColors.size % TAG_PALETTE.length]);
+  return tagColors.get(tag);
+}
+function resolvedTagColor(tag) { return cssVar(tagColorVarName(tag)); }
+
+function cloneLocation(loc) { return new SocialLang.Location(loc.id, loc.typeName, loc.tag, loc.capacity, loc.x, loc.y); }
+
+function worldSignature(worldDecl) {
+  if (!worldDecl) return null;
+  return JSON.stringify({ w: worldDecl.width, h: worldDecl.height, types: worldDecl.locationTypes.map((lt) => [lt.name, lt.tag, lt.capacity, lt.count]) });
+}
+
+function previewSeed() {
+  const raw = seedInput.value.trim();
+  if (raw !== "") return Number(raw) + worldSeedNonce;
+  return Math.floor(Math.random() * 4294967296);
+}
+
+function renderSandboxLegend(worldDecl) {
+  const tags = Array.from(new Set(worldDecl.locationTypes.map((lt) => lt.tag).filter(Boolean)));
+  sandboxLegendEl.innerHTML = tags.map((tag) => `<span class="swatch" style="--dot:var(${tagColorVarName(tag)})">${escapeHtml(tag)}</span>`).join("");
+}
+
+// Re-parses the editor (silently keeping the last good preview on a parse
+// error, same as the syntax highlighter) and, when the world {} declaration's
+// shape actually changed (or forceRegenerate is set, e.g. a new example or
+// "Randomize layout"), draws a fresh procedurally-scattered layout -- editing
+// an unrelated part of the program does NOT reset a layout you've dragged.
+function refreshWorldPreview(forceRegenerate) {
+  let sim;
+  try { sim = SocialLang.parse(editor.value); } catch (_) { return; }
+  currentSimWorld = sim.world;
+
+  if (!sim.world) {
+    sandboxEmptyEl.hidden = false;
+    sandboxCanvas.style.visibility = "hidden";
+    sandboxLegendEl.innerHTML = "";
+    randomizeLayoutBtn.disabled = true;
+    resetLayoutBtn.disabled = true;
+    lastWorldSignature = null;
+    currentWorldLayout = new Map();
+    baseWorldLayout = new Map();
+    return;
+  }
+
+  sandboxEmptyEl.hidden = true;
+  sandboxCanvas.style.visibility = "visible";
+  randomizeLayoutBtn.disabled = false;
+  resetLayoutBtn.disabled = false;
+
+  const sig = worldSignature(sim.world);
+  if (forceRegenerate || sig !== lastWorldSignature) {
+    lastWorldSignature = sig;
+    const rng = new SocialLang.SeededRandom(previewSeed());
+    baseWorldLayout = SocialLang.setupWorldLocations(sim.world, rng);
+    currentWorldLayout = new Map();
+    for (const [id, loc] of baseWorldLayout) currentWorldLayout.set(id, cloneLocation(loc));
+    selectedAgentSeat = null;
+    sandboxInspectorEl.hidden = true;
+  }
+
+  renderSandboxLegend(sim.world);
+  drawSandbox();
+}
+
+function resizeCanvasForDPR() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = sandboxCanvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width * dpr));
+  const h = Math.max(1, Math.round(rect.height * dpr));
+  if (sandboxCanvas.width !== w || sandboxCanvas.height !== h) { sandboxCanvas.width = w; sandboxCanvas.height = h; }
+  const ctx = sandboxCanvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, width: rect.width, height: rect.height };
+}
+
+function worldToPixel(x, y, cw, ch) {
+  const w = (currentSimWorld && currentSimWorld.width) || 1, h = (currentSimWorld && currentSimWorld.height) || 1;
+  const scale = Math.min(cw / w, ch / h);
+  return [(cw - w * scale) / 2 + x * scale, (ch - h * scale) / 2 + y * scale];
+}
+function pixelToWorld(px, py, cw, ch) {
+  const w = (currentSimWorld && currentSimWorld.width) || 1, h = (currentSimWorld && currentSimWorld.height) || 1;
+  const scale = Math.min(cw / w, ch / h);
+  return [(px - (cw - w * scale) / 2) / scale, (py - (ch - h * scale) / 2) / scale];
+}
+
+function drawSandbox() {
+  if (!currentSimWorld) return;
+  const { ctx, width, height } = resizeCanvasForDPR();
+  ctx.clearRect(0, 0, width, height);
+
+  for (const loc of currentWorldLayout.values()) {
+    const [px, py] = worldToPixel(loc.x, loc.y, width, height);
+    const r = loc.id === draggingLocId ? 9 : (loc.id === hoverLocId ? 7.5 : 6);
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = resolvedTagColor(loc.tag);
+    ctx.fill();
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = cssVar("--ink");
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  const frame = roundFrames[currentFrameIndex] || [];
+  for (const a of frame) {
+    if (a.x === null || a.x === undefined || a.y === null || a.y === undefined) continue;
+    const [px, py] = worldToPixel(a.x, a.y, width, height);
+    const selected = a.seat === selectedAgentSeat;
+    ctx.beginPath();
+    ctx.arc(px, py, selected ? 6 : 4, 0, Math.PI * 2);
+    ctx.globalAlpha = a.alive ? 1 : 0.5;
+    ctx.fillStyle = a.alive ? resolvedTeamColor(a.team) : cssVar("--ink-dim");
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    if (selected) { ctx.lineWidth = 2; ctx.strokeStyle = cssVar("--ink"); ctx.stroke(); }
+  }
+}
+
+// Returns {id, dist} for the nearest hit within range, or null -- callers that
+// need to arbitrate between a location hit and an agent hit (they're frequently
+// at the exact same spot, since spawn_agents_at/move_to place an agent exactly
+// on a location's coordinates) compare .dist rather than one type always winning.
+function hitTestLocation(px, py, w, h) {
+  let best = null, bestDist = 14;
+  for (const loc of currentWorldLayout.values()) {
+    const [lx, ly] = worldToPixel(loc.x, loc.y, w, h);
+    const d = Math.hypot(lx - px, ly - py);
+    if (d < bestDist) { bestDist = d; best = loc.id; }
+  }
+  return best === null ? null : { id: best, dist: bestDist };
+}
+function hitTestAgent(px, py, w, h) {
+  let best = null, bestDist = 10;
+  const frame = roundFrames[currentFrameIndex] || [];
+  for (const a of frame) {
+    if (a.x === null || a.x === undefined) continue;
+    const [ax, ay] = worldToPixel(a.x, a.y, w, h);
+    const d = Math.hypot(ax - px, ay - py);
+    if (d < bestDist) { bestDist = d; best = a.seat; }
+  }
+  return best === null ? null : { seat: best, dist: bestDist };
+}
+
+sandboxCanvas.addEventListener("pointerdown", (e) => {
+  if (!currentSimWorld) return;
+  const rect = sandboxCanvas.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const locHit = hitTestLocation(px, py, rect.width, rect.height);
+  const agentHit = hitTestAgent(px, py, rect.width, rect.height);
+  if (locHit && (!agentHit || locHit.dist <= agentHit.dist)) {
+    draggingLocId = locHit.id;
+    sandboxCanvas.setPointerCapture(e.pointerId);
+    sandboxCanvas.classList.add("dragging");
+    return;
+  }
+  selectedAgentSeat = agentHit ? agentHit.seat : null;
+  updateInspector();
+  drawSandbox();
+});
+
+sandboxCanvas.addEventListener("pointermove", (e) => {
+  if (!currentSimWorld) return;
+  const rect = sandboxCanvas.getBoundingClientRect();
+  const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  if (draggingLocId) {
+    let [wx, wy] = pixelToWorld(px, py, rect.width, rect.height);
+    wx = Math.max(0, Math.min(currentSimWorld.width, wx));
+    wy = Math.max(0, Math.min(currentSimWorld.height, wy));
+    const loc = currentWorldLayout.get(draggingLocId);
+    if (loc) { loc.x = wx; loc.y = wy; drawSandbox(); }
+    return;
+  }
+  const hit = hitTestLocation(px, py, rect.width, rect.height);
+  const hitId = hit ? hit.id : null;
+  if (hitId !== hoverLocId) { hoverLocId = hitId; sandboxCanvas.classList.toggle("draggable", !!hitId); drawSandbox(); }
+});
+
+function endSandboxDrag(e) {
+  if (draggingLocId) {
+    try { sandboxCanvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+    draggingLocId = null;
+    sandboxCanvas.classList.remove("dragging");
+    drawSandbox();
+  }
+}
+sandboxCanvas.addEventListener("pointerup", endSandboxDrag);
+sandboxCanvas.addEventListener("pointercancel", endSandboxDrag);
+
+function updateInspector() {
+  if (!selectedAgentSeat) { sandboxInspectorEl.hidden = true; return; }
+  const frame = roundFrames[currentFrameIndex] || [];
+  const agent = frame.find((a) => a.seat === selectedAgentSeat);
+  if (!agent) { sandboxInspectorEl.hidden = true; return; }
+  sandboxInspectorEl.hidden = false;
+  const events = lastRunResult ? lastRunResult.log.filter((e) => e.author === selectedAgentSeat).slice(-6).reverse() : [];
+  sandboxInspectorEl.innerHTML = `
+    <button class="close-btn" id="inspector-close" title="Close" aria-label="Close">&times;</button>
+    <h4>${escapeHtml(agent.seat)}${agent.alive ? "" : " (eliminated)"}</h4>
+    <div>role: ${escapeHtml(agent.role)}<br>team: ${escapeHtml(agent.team)}</div>
+    ${events.map((e) => `<div class="ev">[r${e.round}] ${escapeHtml(e.text)}</div>`).join("") || '<div class="ev">(no events yet)</div>'}
+  `;
+  document.getElementById("inspector-close").addEventListener("click", () => {
+    selectedAgentSeat = null;
+    sandboxInspectorEl.hidden = true;
+    drawSandbox();
+  });
+}
+
+function updateRoundLabel() {
+  roundLabel.textContent = roundFrames.length === 0 ? "no run yet" : `frame ${currentFrameIndex + 1} / ${roundFrames.length}`;
+}
+
+function stopPlayback() {
+  playing = false;
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  playBtn.textContent = "Play";
+}
+
+function startPlayback() {
+  if (roundFrames.length <= 1) return;
+  playing = true;
+  playBtn.textContent = "Pause";
+  playTimer = setInterval(() => {
+    currentFrameIndex += 1;
+    if (currentFrameIndex >= roundFrames.length) { currentFrameIndex = roundFrames.length - 1; stopPlayback(); }
+    roundScrubber.value = String(currentFrameIndex);
+    updateRoundLabel();
+    updateInspector();
+    drawSandbox();
+  }, 700);
+}
+
+playBtn.addEventListener("click", () => {
+  if (playing) { stopPlayback(); return; }
+  if (currentFrameIndex >= roundFrames.length - 1) currentFrameIndex = 0;
+  startPlayback();
+});
+
+roundScrubber.addEventListener("input", () => {
+  stopPlayback();
+  currentFrameIndex = Number(roundScrubber.value);
+  updateRoundLabel();
+  updateInspector();
+  drawSandbox();
+});
+
+randomizeLayoutBtn.addEventListener("click", () => { worldSeedNonce += 1; refreshWorldPreview(true); });
+
+resetLayoutBtn.addEventListener("click", () => {
+  currentWorldLayout = new Map();
+  for (const [id, loc] of baseWorldLayout) currentWorldLayout.set(id, cloneLocation(loc));
+  drawSandbox();
+});
+
+window.addEventListener("resize", () => { if (currentSimWorld) drawSandbox(); });
+
+// ---------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------
+
 let running = false;
 
 function runCurrent() {
@@ -1446,6 +1868,7 @@ function runCurrent() {
   runBtn.disabled = true;
   setStatus("running");
   logEl.innerHTML = `<div class="log-empty">Running&hellip;</div>`;
+  stopPlayback();
   // Let the "running" status paint before a heavy synchronous run (e.g. city.sl,
   // 5,050 agents) blocks the main thread.
   requestAnimationFrame(() => {
@@ -1453,10 +1876,31 @@ function runCurrent() {
       try {
         const seedRaw = seedInput.value.trim();
         const seed = seedRaw === "" ? undefined : Number(seedRaw);
-        const { result } = SocialLang.runSource(editor.value, makeRoster(32), { seed, maxRounds: 200 });
+        const frames = [];
+        const sink = {
+          onWorld: () => {},
+          onAgents: (snap) => { frames.push(snap.map((a) => ({ ...a }))); },
+          onEvent: () => {},
+          onDone: () => {},
+        };
+        const { result } = SocialLang.runSource(editor.value, makeRoster(32), {
+          seed, maxRounds: 200, sink, worldLocations: currentSimWorld ? currentWorldLayout : undefined,
+        });
         renderRoster(result.agents);
         renderLog(result);
         setStatus("done", result.winner, result.rounds);
+
+        lastRunResult = result;
+        roundFrames = frames.length > 0 ? frames : [result.agents];
+        currentFrameIndex = 0;
+        roundScrubber.max = String(Math.max(roundFrames.length - 1, 0));
+        roundScrubber.value = "0";
+        roundScrubber.disabled = roundFrames.length <= 1;
+        selectedAgentSeat = null;
+        sandboxInspectorEl.hidden = true;
+        updateRoundLabel();
+        drawSandbox();
+        if (currentSimWorld && roundFrames.length > 1) startPlayback();
       } catch (err) {
         renderError(err);
         setStatus("error");
@@ -1517,7 +1961,7 @@ document.querySelector('[data-panel="manual"]').innerHTML = `
   <h3>Scaling without new syntax</h3>
   <p>There's no special "scripted vs. LLM" keyword. <code>role { count: 5000 }</code> and an ordinary <code>fn</code> already suffice &mdash; see <strong>city.sl</strong> and <strong>outbreak.sl</strong> in the picker: most agents are moved by a plain function with zero LLM calls, while a small role is asked something every round via <code>ask_choice_all</code>.</p>
 
-  <div class="callout"><strong>What this page doesn't show:</strong> <code>world {}</code> positions aren't drawn here &mdash; this is a text console, not a map. The repo's Unity viewer renders agents and locations live as points on a 2D map instead.</div>
+  <div class="callout"><strong>The Sandbox tab above</strong> renders a <code>world {}</code> case as a live map instead of just log text &mdash; location markers are draggable before you hit Run (the map's own drag handles), and dragging one to a new spot genuinely changes gameplay: <code>nearby()</code>, <code>move_to()</code>, and <code>agents_at()</code> all read positions from wherever you actually put things. After a run, drag the scrubber or hit Play to watch agents move round by round; click a dot for its recent events. The repo's Unity viewer does the same thing for a live/real-model run outside the browser.</div>
 
   <h3>One difference from the real thing</h3>
   <p>Every "LLM call" here is answered by a mock agent (picks a legal option when one's offered, otherwise a generic line) &mdash; a public page can't safely hold real API keys. The full Python implementation (<code>sociallang run</code>) plays these same files with real models, streams a run live over WebSocket, and exports JSON/HTML replays.</p>
