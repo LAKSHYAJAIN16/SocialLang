@@ -738,7 +738,32 @@ function isTruthy(v) {
 function valuesEqual(left, right) {
   if (left instanceof Agent || right instanceof Agent) return left instanceof Agent && right instanceof Agent && left.seat === right.seat;
   if (left instanceof Location || right instanceof Location) return left instanceof Location && right instanceof Location && left.id === right.id;
+  // Python's == is structural for lists/dicts (two distinct-but-equal-content
+  // lists compare equal); matching that instead of falling back to JS reference
+  // equality for Array/Map.
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i += 1) if (!valuesEqual(left[i], right[i])) return false;
+    return true;
+  }
+  if (left instanceof Map && right instanceof Map) {
+    if (left.size !== right.size) return false;
+    for (const [k, v] of left) {
+      if (!right.has(k) || !valuesEqual(v, right.get(k))) return false;
+    }
+    return true;
+  }
   return left === right;
+}
+
+// Python-style list indexing: obj[-1] means "last element." Negative indices
+// count from the end (still bounds-checked), matching how `obj[int(key)]`
+// behaves on a native Python list in the reference interpreter.
+function pyListIndex(list, key) {
+  let idx = Math.trunc(key);
+  if (idx < 0) idx += list.length;
+  if (idx < 0 || idx >= list.length) throw new SLRuntimeError("list index out of range");
+  return idx;
 }
 
 function assignAgents(sim, roster, rng) {
@@ -869,7 +894,7 @@ class Interpreter {
     if (target.kind === "Index") {
       const obj = this.evalExpr(target.obj, env), key = this.evalExpr(target.key, env);
       if (obj instanceof Map) obj.set(key, value);
-      else if (Array.isArray(obj)) { const idx = Math.trunc(key); if (idx < 0 || idx >= obj.length) throw new SLRuntimeError("list index out of range"); obj[idx] = value; }
+      else if (Array.isArray(obj)) { obj[pyListIndex(obj, key)] = value; }
       else throw new SLRuntimeError("cannot index-assign into this value");
       return;
     }
@@ -894,7 +919,7 @@ class Interpreter {
       case "Index": {
         const obj = this.evalExpr(node.obj, env), key = this.evalExpr(node.key, env);
         if (obj instanceof Map) return obj.has(key) ? obj.get(key) : null;
-        if (Array.isArray(obj)) { const idx = Math.trunc(key); if (idx < 0 || idx >= obj.length) throw new SLRuntimeError("list index out of range"); return obj[idx]; }
+        if (Array.isArray(obj)) { return obj[pyListIndex(obj, key)]; }
         throw new SLRuntimeError("cannot index this value");
       }
       case "Call": return this._evalCall(node, env);
@@ -916,7 +941,7 @@ class Interpreter {
       case "-": return left - right;
       case "*": return left * right;
       case "/": return left / right;
-      case "%": return left % right;
+      case "%": return ((left % right) + right) % right; // Python floor-mod: sign follows the divisor, not JS's (sign follows the dividend)
       case "==": return valuesEqual(left, right);
       case "!=": return !valuesEqual(left, right);
       case "<": return left < right;
@@ -977,7 +1002,7 @@ class Interpreter {
     this.events.push(e);
     if (visibleTo === null) this.publicEvents.push(e);
     else for (const seat of visibleTo) { if (!this.privateEvents.has(seat)) this.privateEvents.set(seat, []); this.privateEvents.get(seat).push(e); }
-    const entry = { seq: e.seq, round: e.round, kind, text, author, visibleTo: visibleTo ? Array.from(visibleTo).sort() : null };
+    const entry = { seq: e.seq, round: e.round, kind, text, author, visibleTo: visibleTo && visibleTo.size > 0 ? Array.from(visibleTo).sort() : null };
     this.runLog.push(entry);
     if (this.sink) this.sink.onEvent(entry);
     return e;
@@ -1190,9 +1215,15 @@ class Interpreter {
 
 function runSource(source, roster, opts = {}) {
   const sim = parse(source);
-  const rng = opts.rng || new SeededRandom(opts.seed);
-  const { agents, rolesByName } = assignAgents(sim, roster, rng);
-  const interp = new Interpreter(sim, agents, rolesByName, { rng, sink: opts.sink });
+  // Two independently seeded RNGs, matching the Python reference's run_source
+  // (a fresh random.Random(seed) for assign_agents, and Interpreter.__init__
+  // building its own separate random.Random(seed) from the same seed value) --
+  // not one shared, continued stream. Otherwise world-scatter/tally/tie-break
+  // draws would depend on how many random calls assignAgents happened to make
+  // (which varies with population size), instead of only on `seed`.
+  const assignRng = opts.rng || new SeededRandom(opts.seed);
+  const { agents, rolesByName } = assignAgents(sim, roster, assignRng);
+  const interp = new Interpreter(sim, agents, rolesByName, { seed: opts.seed, sink: opts.sink });
   return { interp, result: interp.run(opts.maxRounds || 200, opts.onProgress) };
 }
 
