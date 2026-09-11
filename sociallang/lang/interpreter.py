@@ -745,14 +745,24 @@ class Interpreter:
             raise SLRuntimeError("spawn_agents_at: no locations match" + (f" tag '{tag}'" if tag else ""))
         for agent in agents_list:
             loc = self.rng.choice(candidates)
+            # agent.x/y are a cached copy of the location's coordinates, not derived
+            # from location_id on read (nearby() reads agent.x/y directly) -- any new
+            # call site that moves an agent must set all three fields together, same
+            # as here and _bi_move_to below, or positions silently desync.
             agent.location_id, agent.x, agent.y = loc.id, loc.x, loc.y
 
     def _bi_move_to(self, args: list[Any]) -> None:
         agent: Agent = args[0]
         loc: Location = args[1]
-        agent.location_id, agent.x, agent.y = loc.id, loc.x, loc.y
+        agent.location_id, agent.x, agent.y = loc.id, loc.x, loc.y  # keep in lockstep -- see _bi_spawn_agents_at
 
     def _bi_nearby(self, args: list[Any], kwargs: dict[str, Any]) -> list[Agent]:
+        # O(agents) per call -- fine at the scale the shipped example games
+        # exercise it at (outbreak.sl's 620 agents finishes in tens of
+        # milliseconds), but a game that called this every round for a
+        # thousands-of-agents population would want a real spatial index (grid
+        # buckets keyed by cell) instead of this linear scan. Not implemented;
+        # noted here rather than guessed at speculatively.
         agent: Agent = args[0]
         radius = float(args[1]) if len(args) > 1 else float(kwargs.get("radius", 5.0))
         if agent.x is None:

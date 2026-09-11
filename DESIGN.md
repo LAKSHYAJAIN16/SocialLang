@@ -311,3 +311,14 @@ language change needs to be ported there by hand too; see `web/README.md`.
 - `ask_all`/`ask_choice_all` parallelize within one call, but a phase that calls `ask()`
   in a loop instead (the old per-agent style, still fully supported) still serializes —
   scaling a game's LLM tier requires actually using the bulk builtins.
+- `nearby(agent, radius)` is a plain O(agents) linear scan, not a spatial index — fine
+  at the scale the shipped example games use it at (outbreak.sl's 620 agents, tens of
+  milliseconds), but a game calling it every round over a thousands-of-agents
+  population doing frequent proximity queries would want real grid-bucketed spatial
+  indexing instead.
+- `location { capacity: n }` is parsed, stored, and threaded through the interpreter,
+  the saved JSON, and the live bridge's world message, but nothing currently *enforces*
+  it — `spawn_agents_at`/`move_to` will place any number of agents at a location
+  regardless of its declared capacity. It's available as plain data a game can read
+  itself (`count(agents_at(loc)) < loc.capacity`) and act on, not an automatic
+  constraint the builtins apply for you.
