@@ -1,0 +1,1517 @@
+<title>SocialLang Precinct</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Special+Elite&family=IBM+Plex+Sans+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #f2ece0;
+    --surface: #fbf6ec;
+    --surface-2: #ece1c9;
+    --ink: #241d14;
+    --ink-dim: #6b5f48;
+    --accent: #a3691d;
+    --accent-ink: #fffaf0;
+    --danger: #8a2e2e;
+    --danger-ink: #fdf0ee;
+    --safe: #3d6a5c;
+    --safe-ink: #eef7f4;
+    --hue-4: #4d5fa3;
+    --hue-5: #93518a;
+    --hue-6: #8a7422;
+    --line: rgba(36, 29, 20, 0.18);
+    --shadow: rgba(36, 29, 20, 0.22);
+    --font-display: 'Special Elite', 'Courier New', monospace;
+    --font-body: 'IBM Plex Sans Condensed', system-ui, -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14110d; --surface: #1c1712; --surface-2: #271f17;
+      --ink: #ece4d3; --ink-dim: #a89a80;
+      --accent: #d98e2b; --accent-ink: #1c1712;
+      --danger: #c1584f; --danger-ink: #2a1210;
+      --safe: #5c9a86; --safe-ink: #0f2420;
+      --hue-4: #8b9be0; --hue-5: #cf8fc4; --hue-6: #d4b23a;
+      --line: rgba(236, 228, 211, 0.14); --shadow: rgba(0, 0, 0, 0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14110d; --surface: #1c1712; --surface-2: #271f17;
+    --ink: #ece4d3; --ink-dim: #a89a80;
+    --accent: #d98e2b; --accent-ink: #1c1712;
+    --danger: #c1584f; --danger-ink: #2a1210;
+    --safe: #5c9a86; --safe-ink: #0f2420;
+    --hue-4: #8b9be0; --hue-5: #cf8fc4; --hue-6: #d4b23a;
+    --line: rgba(236, 228, 211, 0.14); --shadow: rgba(0, 0, 0, 0.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right));
+  }
+  a { color: var(--accent); }
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding-block: 20px 40px; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between;
+    gap: 16px 24px; padding-bottom: 16px; margin-bottom: 20px;
+    border-bottom: 2px solid var(--line);
+  }
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+  .brand .kicker {
+    font: 600 11px/1 var(--font-body); letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--accent);
+  }
+  .brand h1 {
+    margin: 0; font: 400 30px/1.1 var(--font-display); letter-spacing: 0.01em;
+    text-wrap: balance;
+  }
+  .brand p { margin: 4px 0 0; color: var(--ink-dim); font-size: 13.5px; max-width: 52ch; }
+
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field label {
+    font: 600 10px/1 var(--font-body); letter-spacing: 0.09em; text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  select, input[type="number"] {
+    font: 500 13.5px/1 var(--font-body); color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; height: 34px;
+  }
+  select:focus-visible, input:focus-visible, button:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  input[type="number"] { width: 72px; font-variant-numeric: tabular-nums; }
+
+  button.run {
+    height: 34px; padding: 0 18px; border: none; border-radius: 6px; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink);
+    font: 700 13.5px/1 var(--font-body); letter-spacing: 0.03em; text-transform: uppercase;
+    box-shadow: 0 1px 0 var(--shadow);
+  }
+  button.run:disabled { opacity: 0.55; cursor: default; }
+  button.run:not(:disabled):hover { filter: brightness(1.08); }
+
+  .status {
+    height: 34px; display: inline-flex; align-items: center; padding: 0 12px;
+    border-radius: 999px; font: 600 12.5px/1 var(--font-body); white-space: nowrap;
+    background: var(--surface-2); color: var(--ink-dim); border: 1px solid var(--line);
+  }
+  .status-running { color: var(--accent); border-color: var(--accent); }
+  .status-running::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    display: inline-block; margin-right: 7px; animation: pulse 1s ease-in-out infinite;
+  }
+  .status-error { background: var(--danger-ink); color: var(--danger); border-color: var(--danger); }
+  .status-done { background: var(--safe-ink); color: var(--safe); border-color: var(--safe); }
+  @media (prefers-reduced-motion: reduce) { .status-running::before { animation: none; } }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  /* ---------- main grid ---------- */
+  main { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; align-items: stretch; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 1px 3px var(--shadow); display: flex; flex-direction: column;
+    overflow: hidden; min-width: 0;
+  }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2);
+  }
+  .panel-head h2 {
+    margin: 0; font: 400 15px/1 var(--font-display); letter-spacing: 0.02em;
+  }
+  .panel-head .hint { font-size: 11.5px; color: var(--ink-dim); }
+
+  /* ---------- editor ---------- */
+  .editor-body { display: flex; flex: 1 1 auto; min-height: 0; height: min(66vh, 640px); }
+  .gutter {
+    flex: 0 0 auto; width: 42px; padding: 12px 6px 12px 0; text-align: right;
+    background: var(--surface); color: var(--ink-dim); opacity: 0.6;
+    font: 400 13px/1.55 var(--font-mono); overflow: hidden; user-select: none;
+    border-right: 1px solid var(--line); white-space: pre;
+  }
+  .editor-stack { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .editor-highlight, .editor-input {
+    position: absolute; inset: 0; margin: 0; padding: 12px 14px;
+    font: 400 13px/1.55 var(--font-mono); white-space: pre; overflow: auto;
+    tab-size: 2;
+  }
+  .editor-highlight { color: var(--ink); pointer-events: none; }
+  .editor-input {
+    background: transparent; color: transparent; caret-color: var(--ink);
+    border: none; resize: none; width: 100%; height: 100%;
+  }
+  .tok-kw { color: var(--danger); font-weight: 600; }
+  .tok-fn { color: var(--hue-4); font-weight: 600; }
+  .tok-str { color: var(--safe); }
+  .tok-num { color: var(--hue-6); }
+  .tok-com { color: var(--ink-dim); font-style: italic; }
+
+  /* ---------- tabs / case log / field manual ---------- */
+  .tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+  .tab-btn {
+    flex: 1 1 auto; border: none; background: transparent; cursor: pointer;
+    padding: 10px 12px; font: 600 12px/1 var(--font-body); letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--ink-dim); border-bottom: 2px solid transparent;
+  }
+  .tab-btn.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+  .tab-panel { flex: 1 1 auto; min-height: 0; height: min(66vh, 640px); overflow-y: auto; }
+
+  .roster {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px;
+    border-bottom: 1px solid var(--line); background: var(--surface);
+  }
+  .chip {
+    --dot: var(--ink-dim);
+    display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 7px;
+    border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line);
+    font: 500 11.5px/1 var(--font-mono); color: var(--ink);
+  }
+  .chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot); }
+  .chip-dead { opacity: 0.5; text-decoration: line-through; }
+
+  .log { padding: 6px 14px 16px; font: 400 12.5px/1.6 var(--font-mono); }
+  .log-round {
+    margin: 14px 0 6px; padding-top: 10px; border-top: 1px dashed var(--line);
+    font: 400 12px/1 var(--font-display); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .log-round:first-child { margin-top: 4px; border-top: none; padding-top: 0; }
+  .log-entry { padding: 3px 0; word-wrap: break-word; }
+  .log-author { --dot: var(--ink-dim); color: var(--dot); font-weight: 700; margin-right: 2px; }
+  .log-tag {
+    font: 600 9.5px/1 var(--font-body); text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-dim); background: var(--surface-2); border-radius: 4px; padding: 2px 5px;
+    margin-right: 6px;
+  }
+  .log-ask { color: var(--ink-dim); }
+  .log-final {
+    margin-top: 16px; padding: 12px; border-radius: 8px; background: var(--surface-2);
+    border: 1px solid var(--line); font: 600 13px/1.5 var(--font-body); color: var(--ink);
+  }
+  .log-error {
+    margin: 10px 14px; padding: 12px 14px; border-radius: 8px;
+    background: var(--danger-ink); color: var(--danger); border: 1px solid var(--danger);
+    font: 500 13px/1.6 var(--font-mono); white-space: pre-wrap;
+  }
+  .log-empty { padding: 20px 14px; color: var(--ink-dim); font-size: 13px; }
+
+  /* ---------- field manual (tutorial) ---------- */
+  .manual { padding: 16px 18px 24px; font-size: 13.5px; line-height: 1.65; }
+  .manual h3 {
+    font: 400 16px/1.2 var(--font-display); margin: 22px 0 8px; letter-spacing: 0.01em;
+  }
+  .manual h3:first-child { margin-top: 0; }
+  .manual p { margin: 0 0 10px; color: var(--ink); }
+  .manual code {
+    font: 500 12.5px/1 var(--font-mono); background: var(--surface-2); padding: 1px 5px;
+    border-radius: 4px; border: 1px solid var(--line);
+  }
+  .manual pre {
+    font: 400 12px/1.55 var(--font-mono); background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px 12px; overflow-x: auto; margin: 0 0 12px;
+  }
+  .manual table { border-collapse: collapse; width: 100%; margin: 0 0 14px; font-size: 12.5px; }
+  .manual th, .manual td {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top;
+  }
+  .manual th { color: var(--ink-dim); font: 600 10.5px/1.3 var(--font-body); text-transform: uppercase; letter-spacing: 0.04em; }
+  .manual td code { white-space: nowrap; }
+  .manual ul { margin: 0 0 12px; padding-left: 20px; }
+  .manual li { margin-bottom: 4px; }
+  .callout {
+    border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0;
+    padding: 10px 12px; margin: 0 0 14px; font-size: 12.5px; color: var(--ink-dim);
+  }
+  .callout strong { color: var(--ink); }
+
+  footer {
+    margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px;
+    font-size: 12px; color: var(--ink-dim);
+  }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <span class="kicker">Field terminal &middot; est. procedurally</span>
+      <h1>SocialLang Precinct</h1>
+      <p>Write and run a SocialLang program right here &mdash; its lexer, parser, and interpreter, ported line-for-line, running entirely in this tab. No server, no API keys: LLM calls are answered by a mock agent so every case still closes.</p>
+    </div>
+    <div class="controls">
+      <div class="field">
+        <label for="example-select">Case file</label>
+        <select id="example-select"></select>
+      </div>
+      <div class="field">
+        <label for="seed-input">Seed</label>
+        <input id="seed-input" type="number" placeholder="random" min="0" step="1">
+      </div>
+      <button class="run" id="run-btn">Run &#9656;</button>
+      <span class="status" id="status-pill">idle</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Case File &mdash; editor</h2>
+        <span class="hint" id="line-count">0 lines</span>
+      </div>
+      <div class="editor-body">
+        <div class="gutter" id="gutter">1</div>
+        <div class="editor-stack">
+          <pre class="editor-highlight" id="highlight"><code></code></pre>
+          <textarea class="editor-input" id="editor" spellcheck="false" autocapitalize="off" autocorrect="off"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="log">Case Log</button>
+        <button class="tab-btn" data-tab="manual">Field Manual</button>
+      </div>
+
+      <div class="tab-panel" data-panel="log">
+        <div class="roster" id="roster"></div>
+        <div class="log" id="log"><div class="log-empty">Press Run to play this case.</div></div>
+      </div>
+
+      <div class="tab-panel" data-panel="manual" hidden></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>SocialLang is a real language &mdash; lexer, parser, tree-walking interpreter &mdash; for LLM agents to play social games.</span>
+    <span>Full CLI, procedural <code>world&nbsp;{}</code>, live Unity viewer: see the repo's README.md / DESIGN.md.</span>
+  </footer>
+</div>
+
+<script>
+/* ============================================================================
+   SocialLang engine -- ported from sociallang/lang/{lexer,parser,interpreter,
+   memory}.py and sociallang/providers/mock_provider.py. See DESIGN.md in the
+   repo for the authoritative language reference; this is the same grammar and
+   the same builtins, running client-side with a mock LLM provider (a public
+   page can't hold real API keys).
+============================================================================ */
+"use strict";
+(function (global) {
+
+const KEYWORDS = new Set([
+  "sim", "agents", "memory", "role", "fn", "phase", "win_condition", "loop", "world",
+  "let", "if", "else", "while", "for", "in", "return", "run", "break",
+  "true", "false", "null", "and", "or", "not",
+]);
+
+const SYMBOLS = [
+  "..", "==", "!=", "<=", ">=",
+  "{", "}", "(", ")", "[", "]", ",", ":", ".", "+", "-", "*", "/", "%",
+  "<", ">", "=",
+];
+
+class LexError extends Error {}
+
+function isDigit(ch) { return ch >= "0" && ch <= "9"; }
+function isAlpha(ch) { return (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z"); }
+function isAlnum(ch) { return isAlpha(ch) || isDigit(ch); }
+
+function tokenize(source) {
+  const tokens = [];
+  let i = 0, line = 1;
+  const n = source.length;
+
+  while (i < n) {
+    const ch = source[i];
+    if (ch === "\n") { line += 1; i += 1; continue; }
+    if (ch === " " || ch === "\t" || ch === "\r") { i += 1; continue; }
+    if (ch === "/" && i + 1 < n && source[i + 1] === "/") {
+      while (i < n && source[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      let j = i + 1, buf = "";
+      while (j < n && source[j] !== '"') {
+        if (source[j] === "\\" && j + 1 < n) {
+          const esc = source[j + 1];
+          const map = { n: "\n", t: "\t", '"': '"', "\\": "\\" };
+          buf += Object.prototype.hasOwnProperty.call(map, esc) ? map[esc] : esc;
+          j += 2; continue;
+        }
+        buf += source[j]; j += 1;
+      }
+      if (j >= n) throw new LexError(`unterminated string starting at line ${line}`);
+      tokens.push({ kind: "STRING", value: buf, line });
+      i = j + 1; continue;
+    }
+    if (isDigit(ch)) {
+      let j = i;
+      while (j < n && isDigit(source[j])) j += 1;
+      if (j < n && source[j] === "." && j + 1 < n && isDigit(source[j + 1])) {
+        j += 1;
+        while (j < n && isDigit(source[j])) j += 1;
+      }
+      tokens.push({ kind: "NUMBER", value: source.slice(i, j), line });
+      i = j; continue;
+    }
+    if (isAlpha(ch) || ch === "_") {
+      let j = i;
+      while (j < n && (isAlnum(source[j]) || source[j] === "_")) j += 1;
+      const word = source.slice(i, j);
+      tokens.push({ kind: KEYWORDS.has(word) ? "KEYWORD" : "IDENT", value: word, line });
+      i = j; continue;
+    }
+    let matched = null;
+    for (const s of SYMBOLS) { if (source.startsWith(s, i)) { matched = s; break; } }
+    if (matched) { tokens.push({ kind: "SYMBOL", value: matched, line }); i += matched.length; continue; }
+    throw new LexError(`unexpected character ${JSON.stringify(ch)} at line ${line}`);
+  }
+  tokens.push({ kind: "EOF", value: "", line });
+  return tokens;
+}
+
+class ParseError extends Error {}
+
+class Parser {
+  constructor(tokens) { this.tokens = tokens; this.pos = 0; }
+  peek() { return this.tokens[this.pos]; }
+  advance() { const t = this.tokens[this.pos]; if (t.kind !== "EOF") this.pos += 1; return t; }
+  check(kind, value) { const t = this.peek(); return t.kind === kind && (value === undefined || t.value === value); }
+  match(kind, value) { if (this.check(kind, value)) return this.advance(); return null; }
+  expect(kind, value) {
+    const t = this.match(kind, value);
+    if (t === null) {
+      const cur = this.peek();
+      const expected = value !== undefined ? value : kind;
+      throw new ParseError(`line ${cur.line}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(cur.value)} (${cur.kind})`);
+    }
+    return t;
+  }
+  isKw(w) { return this.check("KEYWORD", w); }
+
+  parseProgram() {
+    this.expect("KEYWORD", "sim");
+    const name = this.expect("IDENT").value;
+    this.expect("SYMBOL", "{");
+    const sim = { kind: "SimDecl", name, agentsMin: 0, agentsMax: 0, roles: [], memoryDecls: [], fns: [], phases: [], winCondition: null, loop: null, world: null };
+    while (!this.check("SYMBOL", "}")) {
+      if (this.isKw("agents")) {
+        this.advance(); this.expect("SYMBOL", ":");
+        let lo = Math.trunc(parseFloat(this.expect("NUMBER").value));
+        let hi = lo;
+        if (this.match("SYMBOL", "..")) hi = Math.trunc(parseFloat(this.expect("NUMBER").value));
+        sim.agentsMin = lo; sim.agentsMax = hi;
+      } else if (this.isKw("memory")) sim.memoryDecls.push(this.parseMemoryDecl());
+      else if (this.isKw("role")) sim.roles.push(this.parseRoleDecl());
+      else if (this.isKw("fn")) sim.fns.push(this.parseFnDecl());
+      else if (this.isKw("phase")) sim.phases.push(this.parsePhaseDecl());
+      else if (this.isKw("win_condition")) { this.advance(); sim.winCondition = this.parseBlock(); }
+      else if (this.isKw("loop")) { this.advance(); sim.loop = this.parseBlock(); }
+      else if (this.isKw("world")) sim.world = this.parseWorldDecl();
+      else { const cur = this.peek(); throw new ParseError(`line ${cur.line}: unexpected token ${JSON.stringify(cur.value)} in sim body`); }
+    }
+    this.expect("SYMBOL", "}");
+    return sim;
+  }
+
+  parseMemoryDecl() {
+    this.advance();
+    const name = this.expect("IDENT").value;
+    const params = [];
+    if (this.match("SYMBOL", "(")) {
+      while (!this.check("SYMBOL", ")")) { params.push(this.expect("IDENT").value); if (!this.match("SYMBOL", ",")) break; }
+      this.expect("SYMBOL", ")");
+    }
+    const body = this.parseBlock();
+    return { kind: "MemoryDecl", name, params, body };
+  }
+
+  parseRoleDecl() {
+    this.advance();
+    const name = this.expect("IDENT").value;
+    this.expect("SYMBOL", "{");
+    let team = name, memoryName = null, memoryArgs = [], sees = "none", count = null;
+    while (!this.check("SYMBOL", "}")) {
+      const fieldName = this.advance().value;
+      this.expect("SYMBOL", ":");
+      if (fieldName === "team") team = this.expect("STRING").value;
+      else if (fieldName === "memory") {
+        memoryName = this.expect("IDENT").value;
+        if (this.match("SYMBOL", "(")) {
+          while (!this.check("SYMBOL", ")")) { memoryArgs.push(this.parseExpr()); if (!this.match("SYMBOL", ",")) break; }
+          this.expect("SYMBOL", ")");
+        }
+      } else if (fieldName === "sees") sees = this.advance().value;
+      else if (fieldName === "count") {
+        const tok = this.peek();
+        if (tok.kind === "IDENT" && tok.value === "remainder") { this.advance(); count = null; }
+        else count = Math.trunc(parseFloat(this.expect("NUMBER").value));
+      } else throw new ParseError(`unknown role field ${JSON.stringify(fieldName)}`);
+      this.match("SYMBOL", ",");
+    }
+    this.expect("SYMBOL", "}");
+    return { kind: "RoleDecl", name, team, memoryName, memoryArgs, sees, count };
+  }
+
+  parseWorldDecl() {
+    this.advance(); this.expect("SYMBOL", "{");
+    let width = 0, height = 0;
+    const locationTypes = [];
+    while (!this.check("SYMBOL", "}")) {
+      if (this.peek().kind === "IDENT" && this.peek().value === "location") { locationTypes.push(this.parseLocationTypeDecl()); continue; }
+      const fieldName = this.advance().value;
+      this.expect("SYMBOL", ":");
+      if (fieldName === "width") width = Math.trunc(parseFloat(this.expect("NUMBER").value));
+      else if (fieldName === "height") height = Math.trunc(parseFloat(this.expect("NUMBER").value));
+      else throw new ParseError(`unknown world field ${JSON.stringify(fieldName)}`);
+      this.match("SYMBOL", ",");
+    }
+    this.expect("SYMBOL", "}");
+    return { kind: "WorldDecl", width, height, locationTypes };
+  }
+
+  parseLocationTypeDecl() {
+    this.advance();
+    const name = this.expect("IDENT").value;
+    this.expect("SYMBOL", "{");
+    let tag = null, capacity = null, count = 1;
+    while (!this.check("SYMBOL", "}")) {
+      const fieldName = this.advance().value;
+      this.expect("SYMBOL", ":");
+      if (fieldName === "tag") tag = this.expect("STRING").value;
+      else if (fieldName === "capacity") capacity = Math.trunc(parseFloat(this.expect("NUMBER").value));
+      else if (fieldName === "count") count = Math.trunc(parseFloat(this.expect("NUMBER").value));
+      else throw new ParseError(`unknown location field ${JSON.stringify(fieldName)}`);
+      this.match("SYMBOL", ",");
+    }
+    this.expect("SYMBOL", "}");
+    return { kind: "LocationTypeDecl", name, tag, capacity, count };
+  }
+
+  parseFnDecl() {
+    this.advance();
+    const name = this.expect("IDENT").value;
+    this.expect("SYMBOL", "(");
+    const params = [];
+    while (!this.check("SYMBOL", ")")) { params.push(this.expect("IDENT").value); if (!this.match("SYMBOL", ",")) break; }
+    this.expect("SYMBOL", ")");
+    const body = this.parseBlock();
+    return { kind: "FnDecl", name, params, body };
+  }
+
+  parsePhaseDecl() {
+    this.advance();
+    const name = this.expect("IDENT").value;
+    const body = this.parseBlock();
+    return { kind: "PhaseDecl", name, body };
+  }
+
+  parseBlock() {
+    this.expect("SYMBOL", "{");
+    const statements = [];
+    while (!this.check("SYMBOL", "}")) statements.push(this.parseStatement());
+    this.expect("SYMBOL", "}");
+    return { kind: "Block", statements };
+  }
+
+  parseStatement() {
+    if (this.isKw("let")) {
+      this.advance();
+      const name = this.expect("IDENT").value;
+      this.expect("SYMBOL", "=");
+      return { kind: "LetStmt", name, value: this.parseExpr() };
+    }
+    if (this.isKw("if")) return this.parseIf();
+    if (this.isKw("while")) {
+      this.advance();
+      const condition = this.parseExpr();
+      return { kind: "WhileStmt", condition, body: this.parseBlock() };
+    }
+    if (this.isKw("for")) {
+      this.advance();
+      const varName = this.expect("IDENT").value;
+      this.expect("KEYWORD", "in");
+      const iterable = this.parseExpr();
+      return { kind: "ForStmt", varName, iterable, body: this.parseBlock() };
+    }
+    if (this.isKw("return")) {
+      this.advance();
+      if (this.check("SYMBOL", "}")) return { kind: "ReturnStmt", value: null };
+      return { kind: "ReturnStmt", value: this.parseExpr() };
+    }
+    if (this.isKw("break")) { this.advance(); return { kind: "BreakStmt" }; }
+    if (this.isKw("run")) { this.advance(); return { kind: "RunStmt", phaseName: this.expect("IDENT").value }; }
+    const expr = this.parseExpr();
+    if (this.match("SYMBOL", "=")) return { kind: "AssignStmt", target: expr, value: this.parseExpr() };
+    return { kind: "ExprStmt", expr };
+  }
+
+  parseIf() {
+    this.advance();
+    const condition = this.parseExpr();
+    const thenBlock = this.parseBlock();
+    let elseBlock = null;
+    if (this.match("KEYWORD", "else")) elseBlock = this.isKw("if") ? this.parseIf() : this.parseBlock();
+    return { kind: "IfStmt", condition, thenBlock, elseBlock };
+  }
+
+  parseExpr() { return this.parseOr(); }
+  parseOr() { let l = this.parseAnd(); while (this.match("KEYWORD", "or")) l = { kind: "BinaryOp", op: "or", left: l, right: this.parseAnd() }; return l; }
+  parseAnd() { let l = this.parseNot(); while (this.match("KEYWORD", "and")) l = { kind: "BinaryOp", op: "and", left: l, right: this.parseNot() }; return l; }
+  parseNot() { if (this.match("KEYWORD", "not")) return { kind: "UnaryOp", op: "not", operand: this.parseNot() }; return this.parseComparison(); }
+  static CMP_OPS = new Set(["==", "!=", "<", ">", "<=", ">="]);
+  parseComparison() {
+    let l = this.parseAdditive();
+    while (this.peek().kind === "SYMBOL" && Parser.CMP_OPS.has(this.peek().value)) { const op = this.advance().value; l = { kind: "BinaryOp", op, left: l, right: this.parseAdditive() }; }
+    return l;
+  }
+  parseAdditive() {
+    let l = this.parseMultiplicative();
+    while (this.peek().kind === "SYMBOL" && (this.peek().value === "+" || this.peek().value === "-")) { const op = this.advance().value; l = { kind: "BinaryOp", op, left: l, right: this.parseMultiplicative() }; }
+    return l;
+  }
+  parseMultiplicative() {
+    let l = this.parseUnary();
+    while (this.peek().kind === "SYMBOL" && ["*", "/", "%"].includes(this.peek().value)) { const op = this.advance().value; l = { kind: "BinaryOp", op, left: l, right: this.parseUnary() }; }
+    return l;
+  }
+  parseUnary() { if (this.match("SYMBOL", "-")) return { kind: "UnaryOp", op: "-", operand: this.parseUnary() }; return this.parsePostfix(); }
+
+  parsePostfix() {
+    let expr = this.parsePrimary();
+    for (;;) {
+      if (this.match("SYMBOL", ".")) {
+        const tok = this.peek();
+        if (tok.kind !== "IDENT" && tok.kind !== "KEYWORD") throw new ParseError(`line ${tok.line}: expected an attribute name after '.', got ${JSON.stringify(tok.value)}`);
+        expr = { kind: "Attr", obj: expr, name: this.advance().value };
+      } else if (this.match("SYMBOL", "(")) {
+        const args = [], kwargs = {};
+        while (!this.check("SYMBOL", ")")) {
+          const next = this.tokens[this.pos + 1];
+          if (this.peek().kind === "IDENT" && next && next.kind === "SYMBOL" && next.value === "=") {
+            const key = this.advance().value; this.advance(); kwargs[key] = this.parseExpr();
+          } else args.push(this.parseExpr());
+          if (!this.match("SYMBOL", ",")) break;
+        }
+        this.expect("SYMBOL", ")");
+        expr = { kind: "Call", callee: expr, args, kwargs };
+      } else if (this.match("SYMBOL", "[")) {
+        const key = this.parseExpr(); this.expect("SYMBOL", "]");
+        expr = { kind: "Index", obj: expr, key };
+      } else break;
+    }
+    return expr;
+  }
+
+  parsePrimary() {
+    const tok = this.peek();
+    if (tok.kind === "NUMBER") { this.advance(); return { kind: "NumberLit", value: parseFloat(tok.value) }; }
+    if (tok.kind === "STRING") { this.advance(); return { kind: "StringLit", value: tok.value }; }
+    if (tok.kind === "KEYWORD" && tok.value === "true") { this.advance(); return { kind: "BoolLit", value: true }; }
+    if (tok.kind === "KEYWORD" && tok.value === "false") { this.advance(); return { kind: "BoolLit", value: false }; }
+    if (tok.kind === "KEYWORD" && tok.value === "null") { this.advance(); return { kind: "NullLit" }; }
+    if (tok.kind === "IDENT") { this.advance(); return { kind: "Identifier", name: tok.value }; }
+    if (this.match("SYMBOL", "(")) { const inner = this.parseExpr(); this.expect("SYMBOL", ")"); return inner; }
+    if (this.match("SYMBOL", "[")) {
+      const items = [];
+      while (!this.check("SYMBOL", "]")) { items.push(this.parseExpr()); if (!this.match("SYMBOL", ",")) break; }
+      this.expect("SYMBOL", "]");
+      return { kind: "ListLit", items };
+    }
+    if (this.match("SYMBOL", "{")) {
+      const pairs = [];
+      while (!this.check("SYMBOL", "}")) {
+        const key = this.parseExpr(); this.expect("SYMBOL", ":"); const value = this.parseExpr();
+        pairs.push([key, value]);
+        if (!this.match("SYMBOL", ",")) break;
+      }
+      this.expect("SYMBOL", "}");
+      return { kind: "DictLit", pairs };
+    }
+    throw new ParseError(`line ${tok.line}: unexpected token ${JSON.stringify(tok.value)} (${tok.kind})`);
+  }
+}
+
+function parse(source) { return new Parser(tokenize(source)).parseProgram(); }
+
+const IMPORTANT_WORDS = new Set(["eliminate", "eliminated", "kill", "killed", "vote", "voted", "accuse", "accused", "win", "won", "lose", "lost", "betray", "betrayed", "suspicious", "suspect", "mafia", "investigate", "investigated", "protect", "protected", "die", "died", "lied", "lying", "trust", "distrust", "reveal", "revealed"]);
+const STOPWORDS = new Set(["a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "to", "of", "in", "on", "at", "for", "and", "or", "but", "not", "this", "that", "it", "as", "by", "with", "who", "what", "when", "where", "why", "how", "do", "does", "did", "you", "your", "i"]);
+function findWords(text) { return String(text).toLowerCase().match(/[a-z']+/g) || []; }
+function heuristicImportance(text) {
+  const words = findWords(text);
+  if (words.length === 0) return 0.0;
+  const hits = words.filter((w) => IMPORTANT_WORDS.has(w)).length;
+  const density = hits / words.length;
+  const lengthFactor = Math.min(words.length / 40.0, 1.0);
+  return Math.max(0.0, Math.min(1.0, 0.3 * lengthFactor + 0.7 * Math.min(density * 5, 1.0)));
+}
+function lexicalRelevance(query, text) {
+  const q = new Set(findWords(query).filter((w) => !STOPWORDS.has(w)));
+  const t = new Set(findWords(text).filter((w) => !STOPWORDS.has(w)));
+  if (q.size === 0 || t.size === 0) return 0.0;
+  let inter = 0; for (const w of q) if (t.has(w)) inter += 1;
+  return inter / new Set([...q, ...t]).size;
+}
+function recencyScore(eventSeq, nowSeq, decay = 0.995) { return Math.pow(decay, Math.max(nowSeq - eventSeq, 0)); }
+function retrieveMemory(events, query, nowSeq, k) {
+  const scored = events.map((e) => [recencyScore(e.seq, nowSeq) + e.importance + lexicalRelevance(query, e.text), e]);
+  scored.sort((a, b) => b[0] - a[0]);
+  const top = scored.slice(0, Math.max(Math.trunc(k), 0)).map((p) => p[1]);
+  top.sort((a, b) => a.seq - b.seq);
+  return top;
+}
+
+class ProviderResponse { constructor(text) { this.text = text; } }
+const OPTIONS_RE = /Respond with exactly one of:\s*(.+)/;
+const FREE_TEXT_POOL = ["I'm not sure yet, let's see how this plays out.", "Something about this doesn't add up to me.", "I'll go along with the group for now.", "Let's hear more before anyone decides anything."];
+class MockProvider {
+  complete(_systemPrompt, userPrompt) {
+    const match = OPTIONS_RE.exec(userPrompt);
+    if (match) {
+      const options = match[1].split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+      if (options.length > 0) return new ProviderResponse(options[Math.floor(Math.random() * options.length)]);
+    }
+    return new ProviderResponse(FREE_TEXT_POOL[Math.floor(Math.random() * FREE_TEXT_POOL.length)]);
+  }
+}
+
+class SeededRandom {
+  constructor(seed) { this._state = (seed === undefined || seed === null ? Math.floor(Math.random() * 4294967296) : seed) >>> 0; }
+  _next() {
+    this._state = (this._state + 0x6d2b79f5) >>> 0;
+    let t = this._state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  random() { return this._next(); }
+  uniform(a, b) { return a + (b - a) * this._next(); }
+  randint(a, b) { return a + Math.floor(this._next() * (b - a + 1)); }
+  choice(list) { return list[Math.floor(this._next() * list.length)]; }
+  shuffle(list) { for (let i = list.length - 1; i > 0; i -= 1) { const j = Math.floor(this._next() * (i + 1)); const t = list[i]; list[i] = list[j]; list[j] = t; } return list; }
+  sample(list, k) { const c = list.slice(); this.shuffle(c); return c.slice(0, k); }
+}
+
+class SLRuntimeError extends Error {}
+class ReturnSignal { constructor(value) { this.value = value; } }
+class BreakSignal {}
+
+class Agent {
+  constructor(seat, roleName, team, modelKey, provider) {
+    this.seat = seat; this.roleName = roleName; this.team = team; this.modelKey = modelKey; this.provider = provider;
+    this.alive = true; this.deathCause = null; this.x = null; this.y = null; this.locationId = null;
+  }
+}
+class Location {
+  constructor(id, typeName, tag, capacity, x, y) { this.id = id; this.typeName = typeName; this.tag = tag; this.capacity = capacity; this.x = x; this.y = y; }
+}
+class EventRec {
+  constructor(seq, round, kind, text, author, visibleTo, importance = 0.0) {
+    this.seq = seq; this.round = round; this.kind = kind; this.text = text; this.author = author; this.visibleTo = visibleTo; this.importance = importance;
+  }
+}
+class Env {
+  constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
+  get(name) { let e = this; while (e) { if (e.vars.has(name)) return e.vars.get(name); e = e.parent; } throw new SLRuntimeError(`undefined variable '${name}'`); }
+  setExisting(name, value) { let e = this; while (e) { if (e.vars.has(name)) { e.vars.set(name, value); return; } e = e.parent; } throw new SLRuntimeError(`assignment to undefined variable '${name}' (use 'let' to declare it first)`); }
+  define(name, value) { this.vars.set(name, value); }
+}
+function isTruthy(v) {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (v instanceof Map) return v.size > 0;
+  if (typeof v === "string") return v.length > 0;
+  return Boolean(v);
+}
+function valuesEqual(left, right) {
+  if (left instanceof Agent || right instanceof Agent) return left instanceof Agent && right instanceof Agent && left.seat === right.seat;
+  if (left instanceof Location || right instanceof Location) return left instanceof Location && right instanceof Location && left.id === right.id;
+  return left === right;
+}
+
+function assignAgents(sim, roster, rng) {
+  const rolesByName = new Map(sim.roles.map((r) => [r.name, r]));
+  const remainderRoles = sim.roles.filter((r) => r.count === null);
+  if (remainderRoles.length > 1) throw new SLRuntimeError("at most one role may use `count: remainder`");
+  const explicitTotal = sim.roles.filter((r) => r.count !== null).reduce((s, r) => s + r.count, 0);
+  let remainderCount = 0;
+  if (remainderRoles.length > 0) {
+    const drawnTotal = sim.agentsMax > 0 ? rng.randint(sim.agentsMin, sim.agentsMax) : explicitTotal;
+    remainderCount = Math.max(drawnTotal - explicitTotal, 0);
+  }
+  const roleNameSequence = [];
+  for (const r of sim.roles) { const n = r.count !== null ? r.count : remainderCount; for (let i = 0; i < n; i += 1) roleNameSequence.push(r.name); }
+  rng.shuffle(roleNameSequence);
+  const total = roleNameSequence.length;
+  if (total === 0) throw new SLRuntimeError("sim has no agents configured -- check role `count`s and `agents:`");
+  const modelKeys = Array.from(roster.keys());
+  if (modelKeys.length === 0) throw new SLRuntimeError("roster is empty -- no runnable models available");
+  const chosenKeys = modelKeys.length >= total ? rng.sample(modelKeys, total) : Array.from({ length: total }, () => rng.choice(modelKeys));
+  const agents = [];
+  for (let i = 0; i < total; i += 1) {
+    const roleName = roleNameSequence[i], modelKey = chosenKeys[i];
+    const provider = roster.get(modelKey), role = rolesByName.get(roleName);
+    agents.push(new Agent(`P${i + 1}`, roleName, role.team, modelKey, provider));
+  }
+  return { agents, rolesByName };
+}
+
+class Interpreter {
+  constructor(sim, agents, rolesByName, opts = {}) {
+    this.sim = sim; this.agents = agents; this.roles = rolesByName;
+    this.sink = opts.sink || null;
+    this.events = []; this.publicEvents = []; this.privateEvents = new Map();
+    this.seq = 0; this.round = 0; this.runLog = [];
+    this.rng = opts.rng || new SeededRandom(opts.seed);
+    this.userFns = new Map(sim.fns.map((f) => [f.name, f]));
+    this.phases = new Map(sim.phases.map((p) => [p.name, p]));
+    this.memoryDecls = new Map(sim.memoryDecls.map((m) => [m.name, m]));
+    this.globalEnv = new Env();
+    this.globalEnv.define("agents", this.agents.slice());
+    this.builtins = this._makeBuiltins();
+    this.world = sim.world; this.worldLocations = new Map();
+    if (this.world) this._setupWorld();
+  }
+
+  _setupWorld() {
+    const { width: w, height: h, locationTypes } = this.world;
+    for (const lt of locationTypes) {
+      for (let i = 0; i < lt.count; i += 1) {
+        const locId = `${lt.name}_${i}`;
+        const [x, y] = this._scatterPoint(w, h);
+        this.worldLocations.set(locId, new Location(locId, lt.name, lt.tag, lt.capacity, x, y));
+      }
+    }
+  }
+  _scatterPoint(w, h, minSpacing = 1.0, maxAttempts = 20) {
+    if (w <= 0 || h <= 0) return [0.0, 0.0];
+    const spacing2 = minSpacing * minSpacing;
+    for (let a = 0; a < maxAttempts; a += 1) {
+      const x = this.rng.uniform(0, w), y = this.rng.uniform(0, h);
+      let ok = true;
+      for (const loc of this.worldLocations.values()) { const dx = x - loc.x, dy = y - loc.y; if (dx * dx + dy * dy < spacing2) { ok = false; break; } }
+      if (ok) return [x, y];
+    }
+    return [this.rng.uniform(0, w), this.rng.uniform(0, h)];
+  }
+
+  run(maxRounds = 200, onProgress = null) {
+    if (!this.sim.loop) throw new SLRuntimeError("sim has no `loop` block");
+    if (this.sink) { if (this.world) this.sink.onWorld(this._worldSnapshot()); this.sink.onAgents(this._agentsSnapshot()); }
+    let winner = null;
+    for (let i = 0; i < maxRounds; i += 1) {
+      this.round += 1;
+      this.globalEnv.define("round", this.round);
+      try { this.execBlock(this.sim.loop, new Env(this.globalEnv)); }
+      catch (e) { if (e instanceof ReturnSignal) { winner = e.value; break; } if (e instanceof BreakSignal) break; throw e; }
+      if (this.sink) this.sink.onAgents(this._agentsSnapshot());
+      if (onProgress) onProgress(this.round);
+    }
+    if (this.sink) { this.sink.onAgents(this._agentsSnapshot()); this.sink.onDone(winner, this.round); }
+    return {
+      winner, rounds: this.round, log: this.runLog, agents: this._agentsSnapshot(),
+      world: this.world ? { width: this.world.width, height: this.world.height, locations: this._worldSnapshot() } : null,
+    };
+  }
+
+  _agentsSnapshot() { return this.agents.map((a) => ({ seat: a.seat, role: a.roleName, team: a.team, model: a.modelKey, alive: a.alive, deathCause: a.deathCause, x: a.x, y: a.y, locationId: a.locationId })); }
+  _worldSnapshot() { return Array.from(this.worldLocations.values()).map((loc) => ({ id: loc.id, type: loc.typeName, tag: loc.tag, capacity: loc.capacity, x: loc.x, y: loc.y })); }
+
+  execBlock(block, env) { for (const stmt of block.statements) this.execStmt(stmt, env); }
+
+  execStmt(stmt, env) {
+    switch (stmt.kind) {
+      case "LetStmt": env.define(stmt.name, this.evalExpr(stmt.value, env)); return;
+      case "AssignStmt": this._assign(stmt.target, this.evalExpr(stmt.value, env), env); return;
+      case "IfStmt":
+        if (isTruthy(this.evalExpr(stmt.condition, env))) this.execBlock(stmt.thenBlock, new Env(env));
+        else if (stmt.elseBlock !== null) { if (stmt.elseBlock.kind === "IfStmt") this.execStmt(stmt.elseBlock, env); else this.execBlock(stmt.elseBlock, new Env(env)); }
+        return;
+      case "WhileStmt":
+        while (isTruthy(this.evalExpr(stmt.condition, env))) { try { this.execBlock(stmt.body, new Env(env)); } catch (e) { if (e instanceof BreakSignal) break; throw e; } }
+        return;
+      case "ForStmt": {
+        const iterable = this.evalExpr(stmt.iterable, env);
+        const items = iterable instanceof Map ? Array.from(iterable.keys()) : iterable.slice();
+        for (const item of items) {
+          const loopEnv = new Env(env); loopEnv.define(stmt.varName, item);
+          try { this.execBlock(stmt.body, loopEnv); } catch (e) { if (e instanceof BreakSignal) break; throw e; }
+        }
+        return;
+      }
+      case "ReturnStmt": throw new ReturnSignal(stmt.value !== null ? this.evalExpr(stmt.value, env) : null);
+      case "BreakStmt": throw new BreakSignal();
+      case "RunStmt": {
+        const phase = this.phases.get(stmt.phaseName);
+        if (!phase) throw new SLRuntimeError(`no such phase '${stmt.phaseName}'`);
+        this.execBlock(phase.body, new Env(this.globalEnv));
+        return;
+      }
+      case "ExprStmt": this.evalExpr(stmt.expr, env); return;
+      default: throw new SLRuntimeError(`unknown statement ${stmt.kind}`);
+    }
+  }
+
+  _assign(target, value, env) {
+    if (target.kind === "Identifier") { env.setExisting(target.name, value); return; }
+    if (target.kind === "Index") {
+      const obj = this.evalExpr(target.obj, env), key = this.evalExpr(target.key, env);
+      if (obj instanceof Map) obj.set(key, value);
+      else if (Array.isArray(obj)) { const idx = Math.trunc(key); if (idx < 0 || idx >= obj.length) throw new SLRuntimeError("list index out of range"); obj[idx] = value; }
+      else throw new SLRuntimeError("cannot index-assign into this value");
+      return;
+    }
+    throw new SLRuntimeError("invalid assignment target");
+  }
+
+  evalExpr(node, env) {
+    switch (node.kind) {
+      case "NumberLit": return node.value;
+      case "StringLit": return node.value;
+      case "BoolLit": return node.value;
+      case "NullLit": return null;
+      case "ListLit": return node.items.map((i) => this.evalExpr(i, env));
+      case "DictLit": { const m = new Map(); for (const [k, v] of node.pairs) m.set(this.evalExpr(k, env), this.evalExpr(v, env)); return m; }
+      case "Identifier": return env.get(node.name);
+      case "UnaryOp":
+        if (node.op === "not") return !isTruthy(this.evalExpr(node.operand, env));
+        if (node.op === "-") return -this.evalExpr(node.operand, env);
+        throw new SLRuntimeError(`unknown unary operator ${node.op}`);
+      case "BinaryOp": return this._evalBinop(node, env);
+      case "Attr": return this._evalAttr(node, env);
+      case "Index": {
+        const obj = this.evalExpr(node.obj, env), key = this.evalExpr(node.key, env);
+        if (obj instanceof Map) return obj.has(key) ? obj.get(key) : null;
+        if (Array.isArray(obj)) { const idx = Math.trunc(key); if (idx < 0 || idx >= obj.length) throw new SLRuntimeError("list index out of range"); return obj[idx]; }
+        throw new SLRuntimeError("cannot index this value");
+      }
+      case "Call": return this._evalCall(node, env);
+      default: throw new SLRuntimeError(`cannot evaluate ${node.kind}`);
+    }
+  }
+
+  _evalBinop(node, env) {
+    if (node.op === "and") { const l = this.evalExpr(node.left, env); return isTruthy(l) ? this.evalExpr(node.right, env) : l; }
+    if (node.op === "or") { const l = this.evalExpr(node.left, env); return isTruthy(l) ? l : this.evalExpr(node.right, env); }
+    const left = this.evalExpr(node.left, env), right = this.evalExpr(node.right, env);
+    switch (node.op) {
+      case "+":
+        if (typeof left === "string" || typeof right === "string") {
+          if (typeof left === "string" && typeof right === "string") return left + right;
+          throw new SLRuntimeError("cannot '+' a string with a non-string -- use str() to convert first");
+        }
+        return left + right;
+      case "-": return left - right;
+      case "*": return left * right;
+      case "/": return left / right;
+      case "%": return left % right;
+      case "==": return valuesEqual(left, right);
+      case "!=": return !valuesEqual(left, right);
+      case "<": return left < right;
+      case ">": return left > right;
+      case "<=": return left <= right;
+      case ">=": return left >= right;
+      default: throw new SLRuntimeError(`unknown operator ${node.op}`);
+    }
+  }
+
+  _evalAttr(node, env) {
+    const obj = this.evalExpr(node.obj, env);
+    let mapping;
+    if (obj instanceof Agent) mapping = { seat: obj.seat, role: obj.roleName, team: obj.team, alive: obj.alive, model: obj.modelKey, x: obj.x, y: obj.y, location: obj.locationId ? (this.worldLocations.get(obj.locationId) || null) : null };
+    else if (obj instanceof EventRec) mapping = { text: obj.text, author: obj.author, kind: obj.kind, seq: obj.seq, round: obj.round, importance: obj.importance };
+    else if (obj instanceof Location) mapping = { id: obj.id, type: obj.typeName, tag: obj.tag, capacity: obj.capacity, x: obj.x, y: obj.y };
+    else throw new SLRuntimeError(`'.${node.name}' is not valid on this kind of value`);
+    if (!(node.name in mapping)) throw new SLRuntimeError(`no attribute '${node.name}' here`);
+    return mapping[node.name];
+  }
+
+  _evalCall(node, env) {
+    if (node.callee.kind !== "Identifier") throw new SLRuntimeError("only named functions can be called");
+    const name = node.callee.name;
+    const args = node.args.map((a) => this.evalExpr(a, env));
+    const kwargs = {};
+    for (const k of Object.keys(node.kwargs)) kwargs[k] = this.evalExpr(node.kwargs[k], env);
+    if (Object.prototype.hasOwnProperty.call(this.builtins, name)) return this.builtins[name](args, kwargs);
+    if (this.userFns.has(name)) return this._callUserFn(name, args);
+    throw new SLRuntimeError(`undefined function '${name}'`);
+  }
+
+  _callUserFn(name, args) {
+    const fn = this.userFns.get(name);
+    const env = new Env(this.globalEnv);
+    for (let i = 0; i < fn.params.length; i += 1) if (i < args.length) env.define(fn.params[i], args[i]);
+    try { this.execBlock(fn.body, env); } catch (e) { if (e instanceof ReturnSignal) return e.value; throw e; }
+    return null;
+  }
+
+  _visibleEventsFor(agent) {
+    const priv = this.privateEvents.get(agent.seat);
+    if (!priv || priv.length === 0) return this.publicEvents.slice();
+    const merged = []; let i = 0, j = 0;
+    while (i < this.publicEvents.length && j < priv.length) {
+      if (this.publicEvents[i].seq <= priv[j].seq) { merged.push(this.publicEvents[i]); i += 1; }
+      else { merged.push(priv[j]); j += 1; }
+    }
+    while (i < this.publicEvents.length) { merged.push(this.publicEvents[i]); i += 1; }
+    while (j < priv.length) { merged.push(priv[j]); j += 1; }
+    return merged;
+  }
+
+  _appendEvent(kind, text, author, visibleTo, importance = null) {
+    this.seq += 1;
+    const imp = importance !== null ? importance : heuristicImportance(text);
+    const e = new EventRec(this.seq, this.round, kind, text, author, visibleTo, imp);
+    this.events.push(e);
+    if (visibleTo === null) this.publicEvents.push(e);
+    else for (const seat of visibleTo) { if (!this.privateEvents.has(seat)) this.privateEvents.set(seat, []); this.privateEvents.get(seat).push(e); }
+    const entry = { seq: e.seq, round: e.round, kind, text, author, visibleTo: visibleTo ? Array.from(visibleTo).sort() : null };
+    this.runLog.push(entry);
+    if (this.sink) this.sink.onEvent(entry);
+    return e;
+  }
+
+  static _renderEvent(e) { return `${e.author ? `[${e.author}] ` : ""}${e.text}`; }
+
+  _callMemory(name, argExprs, events, query) {
+    const args = argExprs.map((a) => this.evalExpr(a, this.globalEnv));
+    const userDecl = this.memoryDecls.get(name);
+    if (userDecl) {
+      const env = new Env(this.globalEnv);
+      env.define("events", events); env.define("query", query);
+      for (let i = 0; i < userDecl.params.length; i += 1) if (i < args.length) env.define(userDecl.params[i], args[i]);
+      try { this.execBlock(userDecl.body, env); } catch (e) { if (e instanceof ReturnSignal) return Array.isArray(e.value) ? e.value : events; throw e; }
+      return events;
+    }
+    if (name === "full_history") return events;
+    if (name === "recent") { const n = args.length > 0 ? Math.trunc(args[0]) : 10; return n > 0 ? events.slice(Math.max(events.length - n, 0)) : []; }
+    if (name === "generative") { const k = args.length > 0 ? Math.trunc(args[0]) : 8; return retrieveMemory(events, query, this.seq, k); }
+    throw new SLRuntimeError(`unknown memory strategy '${name}' (not a native kind, no \`memory ${name}(...) { }\` declared)`);
+  }
+
+  buildContextFor(agent, query) {
+    const role = this.roles.get(agent.roleName);
+    const visible = this._visibleEventsFor(agent);
+    const selected = role.memoryName === null ? visible : this._callMemory(role.memoryName, role.memoryArgs, visible, query);
+    const lines = selected.map((e) => Interpreter._renderEvent(e));
+    return lines.length > 0 ? lines.join("\n") : "(nothing has happened yet)";
+  }
+
+  _stringify(v) {
+    if (v instanceof Agent) return v.seat;
+    if (v instanceof Location) return v.id;
+    if (v instanceof EventRec) return v.text;
+    if (typeof v === "boolean") return v ? "true" : "false";
+    if (v === null || v === undefined) return "null";
+    return String(v);
+  }
+
+  _identityFor(agent, role) {
+    let identity = `You are ${agent.seat}. Your role is ${role.name} (${role.team} team).`;
+    if (role.sees === "teammates") {
+      const teammates = this.agents.filter((a) => a !== agent && a.roleName === role.name).map((a) => a.seat);
+      if (teammates.length > 0) identity += ` Your teammates are: ${teammates.join(", ")}.`;
+    }
+    return identity;
+  }
+
+  _biAsk(args, kwargs) {
+    const [agent, prompt] = args;
+    const temperature = kwargs.temperature !== undefined ? kwargs.temperature : 0.9;
+    const maxTokens = kwargs.max_tokens !== undefined ? kwargs.max_tokens : 500;
+    const context = this.buildContextFor(agent, prompt);
+    const role = this.roles.get(agent.roleName);
+    const identity = this._identityFor(agent, role);
+    const userPrompt = `What has happened so far:\n${context}\n\nNow: ${prompt}`;
+    const resp = agent.provider.complete(identity, userPrompt, temperature, maxTokens);
+    const text = resp.text || "";
+    this._appendEvent("ask", `(asked: ${prompt}) ${text}`, agent.seat, new Set([agent.seat]));
+    return text;
+  }
+
+  static _matchOption(text, options, labels, rng) {
+    const norm = text.trim().replace(/^[."']+|[."']+$/g, "").toLowerCase();
+    for (let i = 0; i < options.length; i += 1) if (labels[i].toLowerCase() === norm) return options[i];
+    for (let i = 0; i < options.length; i += 1) if (text.toLowerCase().includes(labels[i].toLowerCase())) return options[i];
+    return options.length > 0 ? rng.choice(options) : null;
+  }
+
+  _biAskChoice(args, kwargs) {
+    const [agent, prompt, options] = args;
+    const labels = options.map((o) => this._stringify(o));
+    const fullPrompt = `${prompt}\n\nRespond with exactly one of: ${labels.join(", ")}`;
+    const text = this._biAsk([agent, fullPrompt], kwargs);
+    return Interpreter._matchOption(text, options, labels, this.rng);
+  }
+
+  _biAskAll(args, kwargs) {
+    const [agentsList, prompt] = args;
+    const temperature = kwargs.temperature !== undefined ? kwargs.temperature : 0.9;
+    const maxTokens = kwargs.max_tokens !== undefined ? kwargs.max_tokens : 500;
+    const results = new Map();
+    for (const agent of agentsList) {
+      const context = this.buildContextFor(agent, prompt);
+      const role = this.roles.get(agent.roleName);
+      const identity = this._identityFor(agent, role);
+      const userPrompt = `What has happened so far:\n${context}\n\nNow: ${prompt}`;
+      const resp = agent.provider.complete(identity, userPrompt, temperature, maxTokens);
+      const text = resp.text || "";
+      this._appendEvent("ask", `(asked: ${prompt}) ${text}`, agent.seat, new Set([agent.seat]));
+      results.set(agent, text);
+    }
+    return results;
+  }
+
+  _biAskChoiceAll(args, kwargs) {
+    const [agentsList, prompt, options] = args;
+    const labels = options.map((o) => this._stringify(o));
+    const fullPrompt = `${prompt}\n\nRespond with exactly one of: ${labels.join(", ")}`;
+    const texts = this._biAskAll([agentsList, fullPrompt], kwargs);
+    const results = new Map();
+    for (const agent of agentsList) results.set(agent, Interpreter._matchOption(texts.get(agent), options, labels, this.rng));
+    return results;
+  }
+
+  _biBroadcast(args) {
+    if (args.length === 1) this._appendEvent("broadcast", this._stringify(args[0]), null, null);
+    else {
+      const [agent, text] = args;
+      const author = agent instanceof Agent ? agent.seat : this._stringify(agent);
+      this._appendEvent("broadcast", this._stringify(text), author, null);
+    }
+  }
+  _biWhisper(args) {
+    const [who, text] = args;
+    const agentsList = Array.isArray(who) ? who : [who];
+    this._appendEvent("whisper", this._stringify(text), null, new Set(agentsList.map((a) => a.seat)));
+  }
+  _biRemember(args) { const [agent, text] = args; this._appendEvent("note", this._stringify(text), agent.seat, new Set([agent.seat])); }
+
+  _biReflect(args) {
+    const agent = args[0];
+    const visible = this._visibleEventsFor(agent);
+    const top = retrieveMemory(visible, "", this.seq, 15);
+    const context = top.map((e) => Interpreter._renderEvent(e)).join("\n");
+    const role = this.roles.get(agent.roleName);
+    const identity = `You are ${agent.seat}. Your role is ${role.name} (${role.team} team).`;
+    const userPrompt = "Reflect on what has happened so far and state 1-3 higher-level insights or conclusions you can draw, one per line, no numbering.\n\n" + context;
+    const resp = agent.provider.complete(identity, userPrompt);
+    const insights = (resp.text || "").split("\n").map((l) => l.replace(/^[-* ]+|[-* ]+$/g, "").trim()).filter((l) => l.length > 0);
+    for (const insight of insights.slice(0, 3)) this._appendEvent("reflection", insight, agent.seat, new Set([agent.seat]), 0.9);
+    return insights;
+  }
+
+  _biEliminate(args, kwargs) {
+    const agent = args[0];
+    const cause = args.length > 1 ? args[1] : kwargs.cause;
+    agent.alive = false;
+    agent.deathCause = cause !== undefined && cause !== null ? this._stringify(cause) : null;
+    this._appendEvent("broadcast", `${agent.seat} was eliminated${agent.deathCause ? ` (${agent.deathCause})` : ""}.`, null, null, 0.8);
+  }
+
+  _biTally(args) {
+    const votes = args[0];
+    if (!votes || votes.size === 0) return null;
+    const buckets = new Map();
+    for (const target of votes.values()) { const key = target instanceof Agent ? target.seat : target; if (!buckets.has(key)) buckets.set(key, []); buckets.get(key).push(target); }
+    let bestCount = 0; for (const list of buckets.values()) bestCount = Math.max(bestCount, list.length);
+    const winners = []; for (const list of buckets.values()) if (list.length === bestCount) winners.push(list[0]);
+    return this.rng.choice(winners);
+  }
+
+  _biSpawnAgentsAt(args, kwargs) {
+    const agentsList = args[0];
+    const tag = args.length > 1 ? args[1] : kwargs.tag;
+    const candidates = Array.from(this.worldLocations.values()).filter((loc) => tag === undefined || tag === null || loc.tag === tag);
+    if (candidates.length === 0) throw new SLRuntimeError(`spawn_agents_at: no locations match${tag ? ` tag '${tag}'` : ""}`);
+    for (const agent of agentsList) { const loc = this.rng.choice(candidates); agent.locationId = loc.id; agent.x = loc.x; agent.y = loc.y; }
+  }
+  _biMoveTo(args) { const [agent, loc] = args; agent.locationId = loc.id; agent.x = loc.x; agent.y = loc.y; }
+  _biNearby(args, kwargs) {
+    const agent = args[0];
+    const radius = args.length > 1 ? args[1] : (kwargs.radius !== undefined ? kwargs.radius : 5.0);
+    if (agent.x === null) return [];
+    const r2 = radius * radius;
+    return this.agents.filter((ag) => ag !== agent && ag.x !== null && (ag.x - agent.x) ** 2 + (ag.y - agent.y) ** 2 <= r2);
+  }
+  _biPrint(value) { this.runLog.push({ seq: null, round: this.round, kind: "print", text: this._stringify(value), author: null, visibleTo: null }); }
+
+  _checkWin() {
+    if (!this.sim.winCondition) return null;
+    const env = new Env(this.globalEnv);
+    try { this.execBlock(this.sim.winCondition, env); } catch (e) { if (e instanceof ReturnSignal) return e.value; throw e; }
+    return null;
+  }
+
+  _makeBuiltins() {
+    return {
+      ask: (a, k) => this._biAsk(a, k),
+      ask_choice: (a, k) => this._biAskChoice(a, k),
+      ask_all: (a, k) => this._biAskAll(a, k),
+      ask_choice_all: (a, k) => this._biAskChoiceAll(a, k),
+      broadcast: (a) => this._biBroadcast(a),
+      whisper: (a) => this._biWhisper(a),
+      remember: (a) => this._biRemember(a),
+      reflect: (a) => this._biReflect(a),
+      alive: () => this.agents.filter((ag) => ag.alive),
+      all_agents: () => this.agents.slice(),
+      with_role: (a) => this.agents.filter((ag) => ag.roleName === a[0]),
+      team_of: (a) => a[0].team,
+      eliminate: (a, k) => this._biEliminate(a, k),
+      tally: (a) => this._biTally(a),
+      count: (a) => (a[0] instanceof Map ? a[0].size : a[0].length),
+      last: (a) => { const n = Math.trunc(a[1]); return n > 0 ? a[0].slice(Math.max(a[0].length - n, 0)) : []; },
+      random_choice: (a) => (a[0] && a[0].length > 0 ? this.rng.choice(a[0]) : null),
+      str: (a) => this._stringify(a[0]),
+      print: (a) => this._biPrint(a[0]),
+      check_win: () => this._checkWin(),
+      locations: () => Array.from(this.worldLocations.values()),
+      locations_by_tag: (a) => Array.from(this.worldLocations.values()).filter((loc) => loc.tag === a[0]),
+      spawn_agents_at: (a, k) => this._biSpawnAgentsAt(a, k),
+      move_to: (a) => this._biMoveTo(a),
+      location_of: (a) => (a[0].locationId ? (this.worldLocations.get(a[0].locationId) || null) : null),
+      agents_at: (a) => this.agents.filter((ag) => ag.locationId === a[0].id),
+      nearby: (a, k) => this._biNearby(a, k),
+    };
+  }
+}
+
+function runSource(source, roster, opts = {}) {
+  const sim = parse(source);
+  const rng = opts.rng || new SeededRandom(opts.seed);
+  const { agents, rolesByName } = assignAgents(sim, roster, rng);
+  const interp = new Interpreter(sim, agents, rolesByName, { rng, sink: opts.sink });
+  return { interp, result: interp.run(opts.maxRounds || 200, opts.onProgress) };
+}
+
+global.SocialLang = { tokenize, parse, LexError, ParseError, SLRuntimeError, Interpreter, Agent, Location, EventRec, assignAgents, runSource, SeededRandom, MockProvider };
+
+})(window);
+</script>
+
+<script>
+/* ============================================================================
+   IDE chrome: editor (custom syntax-highlighted textarea, no external editor
+   library needed), example cases, run pipeline, case-log rendering, field
+   manual content.
+============================================================================ */
+(function () {
+"use strict";
+
+function b64ToText(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+// Verbatim games/*.sl from the SocialLang repo, base64-encoded so quotes/backticks
+// in the source (comments use `code span` markdown) never collide with this file's
+// own string literals.
+const EXAMPLE_SOURCE = {
+  "mafia.sl": "c2ltIE1hZmlhIHsKICBhZ2VudHM6IDYuLjEwCgogIC8vIGEgY3VzdG9tIG1lbW9yeSBwYXR0ZXJuLCB3cml0dGVuIGluIFNvY2lhbExhbmcgaXRzZWxmOiBtYWZpYSBvbmx5IHNlZSB0aGVpcgogIC8vIGxhc3QgMjAgdmlzaWJsZSBldmVudHMsIG5vdCB0aGUgZnVsbCBnYW1lIGhpc3RvcnkKICBtZW1vcnkgcmVjZW50KG4pIHsKICAgIHJldHVybiBsYXN0KGV2ZW50cywgbikKICB9CgogIHJvbGUgTWFmaWEgewogICAgdGVhbTogIm1hZmlhIgogICAgbWVtb3J5OiByZWNlbnQoMjApCiAgICBzZWVzOiB0ZWFtbWF0ZXMKICAgIGNvdW50OiAyCiAgfQoKICByb2xlIERldGVjdGl2ZSB7CiAgICB0ZWFtOiAidG93biIKICAgIG1lbW9yeTogZnVsbF9oaXN0b3J5CiAgICBzZWVzOiBub25lCiAgICBjb3VudDogMQogIH0KCiAgcm9sZSBEb2N0b3IgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDEKICB9CgogIHJvbGUgVmlsbGFnZXIgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IHJlbWFpbmRlcgogIH0KCiAgcGhhc2UgTmlnaHQgewogICAgbGV0IHRhcmdldHMgPSBhbGl2ZSgpCiAgICBsZXQgdm90ZXMgPSB7fQogICAgZm9yIG0gaW4gd2l0aF9yb2xlKCJNYWZpYSIpIHsKICAgICAgaWYgbS5hbGl2ZSB7CiAgICAgICAgdm90ZXNbbV0gPSBhc2tfY2hvaWNlKG0sICJXaG8gc2hvdWxkIHRoZSBtYWZpYSBlbGltaW5hdGUgdG9uaWdodD8iLCB0YXJnZXRzKQogICAgICB9CiAgICB9CiAgICBsZXQgdmljdGltID0gdGFsbHkodm90ZXMpCgogICAgbGV0IHNhdmVkID0gbnVsbAogICAgZm9yIGQgaW4gd2l0aF9yb2xlKCJEb2N0b3IiKSB7CiAgICAgIGlmIGQuYWxpdmUgewogICAgICAgIHNhdmVkID0gYXNrX2Nob2ljZShkLCAiV2hvIGRvIHlvdSB3YW50IHRvIHByb3RlY3QgdG9uaWdodD8iLCB0YXJnZXRzKQogICAgICB9CiAgICB9CgogICAgZm9yIGRldCBpbiB3aXRoX3JvbGUoIkRldGVjdGl2ZSIpIHsKICAgICAgaWYgZGV0LmFsaXZlIHsKICAgICAgICBsZXQgY2hlY2tlZCA9IGFza19jaG9pY2UoZGV0LCAiV2hvIGRvIHlvdSB3YW50IHRvIGludmVzdGlnYXRlIHRvbmlnaHQ/IiwgYWxpdmUoKSkKICAgICAgICByZW1lbWJlcihkZXQsIGNoZWNrZWQuc2VhdCArICIgaXMgb24gdGhlICIgKyBjaGVja2VkLnRlYW0gKyAiIHRlYW0uIikKICAgICAgfQogICAgfQoKICAgIGlmIHZpY3RpbSAhPSBudWxsIGFuZCB2aWN0aW0gIT0gc2F2ZWQgewogICAgICBlbGltaW5hdGUodmljdGltLCAia2lsbGVkIGJ5IHRoZSBtYWZpYSIpCiAgICB9CiAgfQoKICBwaGFzZSBEYXkgewogICAgZm9yIGEgaW4gYWxpdmUoKSB7CiAgICAgIGJyb2FkY2FzdChhLCBhc2soYSwgIkl0J3MgZGF5dGltZS4gV2hhdCBkbyB5b3Ugd2FudCB0byBzYXkgdG8gdGhlIGdyb3VwPyIpKQogICAgfQoKICAgIGxldCB2b3RlcyA9IHt9CiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgdm90ZXNbYV0gPSBhc2tfY2hvaWNlKGEsICJXaG8gZG8geW91IHdhbnQgdG8gdm90ZSB0byBlbGltaW5hdGU/IiwgYWxpdmUoKSkKICAgIH0KICAgIGxldCBhY2N1c2VkID0gdGFsbHkodm90ZXMpCiAgICBpZiBhY2N1c2VkICE9IG51bGwgewogICAgICBlbGltaW5hdGUoYWNjdXNlZCwgInZvdGVkIG91dCBieSB0aGUgdG93biIpCiAgICB9CiAgfQoKICB3aW5fY29uZGl0aW9uIHsKICAgIGxldCBtYWZpYV9sZWZ0ID0gMAogICAgbGV0IHRvd25fbGVmdCA9IDAKICAgIGZvciBhIGluIGFsaXZlKCkgewogICAgICBpZiBhLnRlYW0gPT0gIm1hZmlhIiB7CiAgICAgICAgbWFmaWFfbGVmdCA9IG1hZmlhX2xlZnQgKyAxCiAgICAgIH0gZWxzZSB7CiAgICAgICAgdG93bl9sZWZ0ID0gdG93bl9sZWZ0ICsgMQogICAgICB9CiAgICB9CiAgICBpZiBtYWZpYV9sZWZ0ID09IDAgewogICAgICByZXR1cm4gInRvd24iCiAgICB9CiAgICBpZiBtYWZpYV9sZWZ0ID49IHRvd25fbGVmdCB7CiAgICAgIHJldHVybiAibWFmaWEiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIHJ1biBOaWdodAogICAgbGV0IHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7CiAgICAgIHJldHVybiB3aW5uZXIKICAgIH0KICAgIHJ1biBEYXkKICAgIHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7CiAgICAgIHJldHVybiB3aW5uZXIKICAgIH0KICB9Cn0K",
+  "trust_game.sl": "c2ltIFRydXN0R2FtZSB7CiAgYWdlbnRzOiAyCgogIHJvbGUgUGxheWVyIHsKICAgIHRlYW06ICJwbGF5ZXIiCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IHJlbWFpbmRlcgogIH0KCiAgZm4gb3RoZXIoYSwgcGxheWVycykgewogICAgZm9yIHAgaW4gcGxheWVycyB7CiAgICAgIGlmIHAuc2VhdCAhPSBhLnNlYXQgewogICAgICAgIHJldHVybiBwCiAgICAgIH0KICAgIH0KICAgIHJldHVybiBudWxsCiAgfQoKICBwaGFzZSBSb3VuZCB7CiAgICBsZXQgcGxheWVycyA9IGFsaXZlKCkKICAgIGxldCBjaG9pY2VzID0ge30KICAgIGZvciBwIGluIHBsYXllcnMgewogICAgICBjaG9pY2VzW3BdID0gYXNrX2Nob2ljZShwLCAiQ29vcGVyYXRlIG9yIGRlZmVjdCB0aGlzIHJvdW5kPyIsIFsiY29vcGVyYXRlIiwgImRlZmVjdCJdKQogICAgfQogICAgZm9yIHAgaW4gcGxheWVycyB7CiAgICAgIGxldCBvcHBvbmVudCA9IG90aGVyKHAsIHBsYXllcnMpCiAgICAgIGxldCBtaW5lID0gY2hvaWNlc1twXQogICAgICBsZXQgdGhlaXJzID0gY2hvaWNlc1tvcHBvbmVudF0KICAgICAgaWYgbWluZSAhPSB0aGVpcnMgewogICAgICAgIGJyb2FkY2FzdChwLnNlYXQgKyAiIHBsYXllZCAiICsgbWluZSArICIgd2hpbGUgIiArIG9wcG9uZW50LnNlYXQgKyAiIHBsYXllZCAiICsgdGhlaXJzICsgIi4iKQogICAgICB9IGVsc2UgewogICAgICAgIGJyb2FkY2FzdChwLnNlYXQgKyAiIGFuZCAiICsgb3Bwb25lbnQuc2VhdCArICIgYm90aCBwbGF5ZWQgIiArIG1pbmUgKyAiLiIpCiAgICAgIH0KICAgIH0KICB9CgogIHdpbl9jb25kaXRpb24gewogICAgaWYgcm91bmQgPiAyMCB7CiAgICAgIHJldHVybiAiY29tcGxldGUiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIHJ1biBSb3VuZAogICAgbGV0IHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7CiAgICAgIHJldHVybiB3aW5uZXIKICAgIH0KICB9Cn0K",
+  "village.sl": "Ly8gQSBzcGF0aWFsIGhpZGRlbi1yb2xlIHNvY2lhbC1kZWR1Y3Rpb24gZ2FtZSAtLSBNYWZpYSdzIHNoYXBlICh3b2x2ZXMgdnMuIHRvd24sCi8vIG5pZ2h0IGtpbGxzLCBkYXkgdm90ZXMpIHBsdXMgYSB3b3JsZCB7fSBzbyBsb2NhdGlvbiBhY3R1YWxseSBkcml2ZXMgdmlzaWJpbGl0eToKLy8gd29sdmVzIHBsYW4gaW4gYSBwcml2YXRlIERlbiAodGhlaXIgbmlnaHQgY2hhdHRlciBpcyB3aGlzcGVyZWQgb25seSB0byB3aG9ldmVyIGlzCi8vIHBoeXNpY2FsbHkgdGhlcmUpLCBhbmQgdGhlIHdob2xlIHZpbGxhZ2UgZ2F0aGVycyBhdCB0aGUgUGxhemEgdG8gdm90ZSBieSBkYXkuCnNpbSBWaWxsYWdlIHsKICBhZ2VudHM6IDYuLjEwCgogIG1lbW9yeSByZWNlbnQobikgewogICAgcmV0dXJuIGxhc3QoZXZlbnRzLCBuKQogIH0KCiAgcm9sZSBXb2xmIHsKICAgIHRlYW06ICJ3b2xmIgogICAgbWVtb3J5OiByZWNlbnQoMjApCiAgICBzZWVzOiB0ZWFtbWF0ZXMKICAgIGNvdW50OiAyCiAgfQoKICByb2xlIFNlZXIgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDEKICB9CgogIHJvbGUgVmlsbGFnZXIgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IHJlbWFpbmRlcgogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDQwCiAgICBoZWlnaHQ6IDQwCiAgICBsb2NhdGlvbiBQbGF6YSB7IHRhZzogInB1YmxpYyIsIGNvdW50OiAxIH0KICAgIGxvY2F0aW9uIERlbiAgIHsgdGFnOiAid29sZiIsIGNvdW50OiAxIH0KICAgIGxvY2F0aW9uIEhvdXNlIHsgdGFnOiAicHJpdmF0ZSIsIGNvdW50OiAxMCB9CiAgfQoKICBwaGFzZSBTZXR0bGUgewogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiVmlsbGFnZXIiKSwgInByaXZhdGUiKQogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiU2VlciIpLCAicHJpdmF0ZSIpCiAgICBzcGF3bl9hZ2VudHNfYXQod2l0aF9yb2xlKCJXb2xmIiksICJwcml2YXRlIikKICB9CgogIHBoYXNlIE5pZ2h0IHsKICAgIGxldCBkZW4gPSBsb2NhdGlvbnNfYnlfdGFnKCJ3b2xmIilbMF0KICAgIGZvciB3IGluIHdpdGhfcm9sZSgiV29sZiIpIHsKICAgICAgaWYgdy5hbGl2ZSB7IG1vdmVfdG8odywgZGVuKSB9CiAgICB9CgogICAgbGV0IHRhcmdldHMgPSBhbGl2ZSgpCiAgICBsZXQgdm90ZXMgPSB7fQogICAgZm9yIHcgaW4gd2l0aF9yb2xlKCJXb2xmIikgewogICAgICBpZiB3LmFsaXZlIHsKICAgICAgICBsZXQgcGljayA9IGFza19jaG9pY2UodywgIldobyBzaG91bGQgdGhlIHdvbHZlcyBlbGltaW5hdGUgdG9uaWdodD8iLCB0YXJnZXRzKQogICAgICAgIHZvdGVzW3ddID0gcGljawogICAgICAgIHdoaXNwZXIoYWdlbnRzX2F0KGRlbiksIHcuc2VhdCArICIgd2FudHMgdG8ga2lsbCAiICsgcGljay5zZWF0ICsgIi4iKQogICAgICB9CiAgICB9CiAgICBsZXQgdmljdGltID0gdGFsbHkodm90ZXMpCgogICAgZm9yIHMgaW4gd2l0aF9yb2xlKCJTZWVyIikgewogICAgICBpZiBzLmFsaXZlIHsKICAgICAgICBsZXQgY2hlY2tlZCA9IGFza19jaG9pY2UocywgIldobyBkbyB5b3Ugd2FudCB0byBpbnZlc3RpZ2F0ZSB0b25pZ2h0PyIsIGFsaXZlKCkpCiAgICAgICAgcmVtZW1iZXIocywgY2hlY2tlZC5zZWF0ICsgIiBpcyBvbiB0aGUgIiArIGNoZWNrZWQudGVhbSArICIgdGVhbS4iKQogICAgICB9CiAgICB9CgogICAgaWYgdmljdGltICE9IG51bGwgewogICAgICBlbGltaW5hdGUodmljdGltLCAia2lsbGVkIGJ5IHRoZSB3b2x2ZXMiKQogICAgfQogIH0KCiAgcGhhc2UgRGF5IHsKICAgIGxldCBwbGF6YSA9IGxvY2F0aW9uc19ieV90YWcoInB1YmxpYyIpWzBdCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgbW92ZV90byhhLCBwbGF6YSkKICAgIH0KCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgYnJvYWRjYXN0KGEsIGFzayhhLCAiSXQncyBkYXl0aW1lIGF0IHRoZSBwbGF6YS4gV2hhdCBkbyB5b3Ugd2FudCB0byBzYXkgdG8gdGhlIGdyb3VwPyIpKQogICAgfQoKICAgIGxldCB2b3RlcyA9IHt9CiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgdm90ZXNbYV0gPSBhc2tfY2hvaWNlKGEsICJXaG8gZG8geW91IHdhbnQgdG8gdm90ZSB0byBlbGltaW5hdGU/IiwgYWxpdmUoKSkKICAgIH0KICAgIGxldCBhY2N1c2VkID0gdGFsbHkodm90ZXMpCiAgICBpZiBhY2N1c2VkICE9IG51bGwgewogICAgICBlbGltaW5hdGUoYWNjdXNlZCwgInZvdGVkIG91dCBieSB0aGUgdmlsbGFnZSIpCiAgICB9CiAgfQoKICB3aW5fY29uZGl0aW9uIHsKICAgIGxldCB3b2x2ZXNfbGVmdCA9IDAKICAgIGxldCB0b3duX2xlZnQgPSAwCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgaWYgYS50ZWFtID09ICJ3b2xmIiB7CiAgICAgICAgd29sdmVzX2xlZnQgPSB3b2x2ZXNfbGVmdCArIDEKICAgICAgfSBlbHNlIHsKICAgICAgICB0b3duX2xlZnQgPSB0b3duX2xlZnQgKyAxCiAgICAgIH0KICAgIH0KICAgIGlmIHdvbHZlc19sZWZ0ID09IDAgewogICAgICByZXR1cm4gInRvd24iCiAgICB9CiAgICBpZiB3b2x2ZXNfbGVmdCA+PSB0b3duX2xlZnQgewogICAgICByZXR1cm4gIndvbGYiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIGlmIHJvdW5kID09IDEgewogICAgICBydW4gU2V0dGxlCiAgICB9CiAgICBydW4gTmlnaHQKICAgIGxldCB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgICBydW4gRGF5CiAgICB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgfQp9Cg==",
+  "city.sl": "Ly8gQSBzcGF0aWFsLCBsYXJnZS1wb3B1bGF0aW9uIGRlbW8uIFN0cnVjdHVyYWxseSB2ZXJ5IGRpZmZlcmVudCBmcm9tIG1hZmlhLnNsLwovLyB0cnVzdF9nYW1lLnNsOiBubyBoaWRkZW4gcm9sZXMsIG5vIGVsaW1pbmF0aW9uLCBubyB3aW4gY29uZGl0aW9uIGJleW9uZCBhIHJvdW5kCi8vIGNhcC4gVGhlIHBvaW50IG9mIHRoaXMgZ2FtZSBpcyB0byBleGVyY2lzZSB0aGUgdHdvIHRoaW5ncyBNYWZpYS9UcnVzdEdhbWUgbmV2ZXIKLy8gbmVlZGVkIC0tIGEgcHJvY2VkdXJhbGx5IGdlbmVyYXRlZCBgd29ybGQge31gIGFuZCBhIHBvcHVsYXRpb24gYmlnIGVub3VnaCB0aGF0Ci8vIGV2ZXJ5IGFnZW50IGNhbGxpbmcgYXNrKCkgaW5kaXZpZHVhbGx5LCBldmVyeSByb3VuZCwgd291bGQgYmUgZmFyIHRvbyBzbG93LgovLwovLyBUd28gdGllcnMsIGV4cHJlc3NlZCB3aXRoIG5vdGhpbmcgbW9yZSB0aGFuIHRoZSBsYW5ndWFnZSBhbHJlYWR5IGhhZCAoYW4gYGlmYCBvbgovLyByb2xlIGFuZCBhIHBsYWluIGBmbmAgLS0gbm8gbmV3ICJiZWhhdmlvciB0aWVyIiBzeW50YXggd2FzIG5lZWRlZCk6Ci8vICAgLSA1MDAwIENpdGl6ZW5zIGp1c3Qgd2FuZGVyIGJldHdlZW4gbG9jYXRpb25zIGVhY2ggcm91bmQ6IHB1cmUgU29jaWFsTGFuZyBjb2RlLAovLyAgICAgbm8gTExNIGNhbGwsIHNvIHRoZWlyIGNvc3QgZG9lc24ndCBkZXBlbmQgb24gbW9kZWwgbGF0ZW5jeSBhdCBhbGwuCi8vICAgLSA1MCBKb3VybmFsaXN0cyBhcmUgdGhlIExMTSB0aWVyOiBlYWNoIHJvdW5kIHRoZXkgYWxsIGdldCBhc2tlZCBmb3IgYSBoZWFkbGluZQovLyAgICAgdmlhIGFza19jaG9pY2VfYWxsKCksIHdoaWNoIGZpcmVzIGV2ZXJ5IG9uZSBvZiB0aG9zZSBjYWxscyBjb25jdXJyZW50bHkKLy8gICAgIGluc3RlYWQgb2Ygc2VyaWFsaXppbmcgNTAgc2VxdWVudGlhbCByb3VuZCB0cmlwcy4Kc2ltIENpdHkgewogIGFnZW50czogNTA1MAoKICByb2xlIENpdGl6ZW4gewogICAgdGVhbTogImNpdGl6ZW4iCiAgICBtZW1vcnk6IHJlY2VudCgzKQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDUwMDAKICB9CgogIHJvbGUgSm91cm5hbGlzdCB7CiAgICB0ZWFtOiAicHJlc3MiCiAgICBtZW1vcnk6IHJlY2VudCgxMCkKICAgIHNlZXM6IG5vbmUKICAgIGNvdW50OiA1MAogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDIwMAogICAgaGVpZ2h0OiAyMDAKICAgIGxvY2F0aW9uIEhvbWUgICB7IHRhZzogInByaXZhdGUiLCBjb3VudDogNDAwIH0KICAgIGxvY2F0aW9uIE1hcmtldCB7IHRhZzogInB1YmxpYyIsIGNhcGFjaXR5OiAyMDAsIGNvdW50OiAyMCB9CiAgICBsb2NhdGlvbiBQbGF6YSAgeyB0YWc6ICJwdWJsaWMiLCBjYXBhY2l0eTogNTAwLCBjb3VudDogNSB9CiAgfQoKICBmbiB3YW5kZXIoYWdlbnQsIGNob2ljZXMpIHsKICAgIGxldCBkZXN0ID0gcmFuZG9tX2Nob2ljZShjaG9pY2VzKQogICAgbW92ZV90byhhZ2VudCwgZGVzdCkKICB9CgogIHBoYXNlIE1vcm5pbmcgewogICAgaWYgcm91bmQgPT0gMSB7CiAgICAgIHNwYXduX2FnZW50c19hdCh3aXRoX3JvbGUoIkNpdGl6ZW4iKSkKICAgICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiSm91cm5hbGlzdCIpLCAicHVibGljIikKICAgIH0KCiAgICBsZXQgY2hvaWNlcyA9IGxvY2F0aW9ucygpCiAgICBmb3IgYyBpbiB3aXRoX3JvbGUoIkNpdGl6ZW4iKSB7CiAgICAgIHdhbmRlcihjLCBjaG9pY2VzKQogICAgfQoKICAgIGxldCByZXBvcnRlcnMgPSB3aXRoX3JvbGUoIkpvdXJuYWxpc3QiKQogICAgbGV0IGhlYWRsaW5lcyA9IGFza19jaG9pY2VfYWxsKAogICAgICByZXBvcnRlcnMsCiAgICAgICJXaGF0J3MgdG9kYXkncyBiaWdnZXN0IGhlYWRsaW5lIGluIHRoZSBjaXR5PyIsCiAgICAgIFsiTWFya2V0IHByaWNlcyByaXNlIiwgIlBsYXphIGdhdGhlcmluZyBncm93cyIsICJRdWlldCBkYXkgaW4gdGhlIGNpdHkiXQogICAgKQogICAgZm9yIHIgaW4gcmVwb3J0ZXJzIHsKICAgICAgYnJvYWRjYXN0KHIsIGhlYWRsaW5lc1tyXSkKICAgIH0KICB9CgogIHdpbl9jb25kaXRpb24gewogICAgaWYgcm91bmQgPj0gMyB7IHJldHVybiAiZG9uZSIgfQogIH0KCiAgbG9vcCB7CiAgICBydW4gTW9ybmluZwogICAgbGV0IHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7IHJldHVybiB3aW5uZXIgfQogIH0KfQo=",
+  "outbreak.sl": "Ly8gQSBsYXJnZS1zY2FsZSBzcGF0aWFsIGRlbW86IDYyMCBhZ2VudHMsIGR5bmFtaWNzIGRyaXZlbiBlbnRpcmVseSBieSBuZWFyYnkoKSwKLy8gZWxpbWluYXRlKCksIGFuZCBhIHNtYWxsIExMTSB0aWVyIG1ha2luZyBhIHBvbGljeSBjYWxsIGVhY2ggcm91bmQuCi8vCi8vICJJbmZlY3RlZCIgaXMgbW9kZWxlZCBieSByZXVzaW5nIGFsaXZlKCkvZWxpbWluYXRlKCkgKGxpa2UgbWFmaWEuc2wgcmV1c2VzIHRoZW0gZm9yCi8vICJlbGltaW5hdGVkIikgcmF0aGVyIHRoYW4gYSBuZXcgcGVyLWFnZW50IGZpZWxkOiB0aGUgbGFuZ3VhZ2UgZG9lc24ndCB5ZXQgaGF2ZSBhIHdheQovLyB0byBhdHRhY2ggYSBjdXN0b20gZmllbGQgdG8gYW4gYWdlbnQgdGhhdCBzdXJ2aXZlcyBhY3Jvc3Mgcm91bmRzIC0tIGBsb29wIHsgfWAgZ2V0cwovLyBhIGZyZXNoIGNoaWxkIHNjb3BlIGV2ZXJ5IGl0ZXJhdGlvbiwgc28gb25seSBBZ2VudCdzIG93biBidWlsdC1pbiBmaWVsZHMgKGFsaXZlLAovLyBkZWF0aF9jYXVzZSwgeCwgeSwgbG9jYXRpb25faWQpIHBlcnNpc3QuIFRoYXQncyBlbm91Z2ggaGVyZTogYW4gaW5mZWN0ZWQvcmVtb3ZlZAovLyByZXNpZGVudCBpcyBqdXN0IGVsaW1pbmF0ZSgpJ2QsIGFuZCBhbGl2ZSgpL3dpdGhfcm9sZSgpIGxldCBldmVyeSBsYXRlciByb3VuZCBzZWUKLy8gd2hvJ3Mgc3RpbGwgaGVhbHRoeS4Kc2ltIE91dGJyZWFrIHsKICBhZ2VudHM6IDYyMAoKICByb2xlIFJlc2lkZW50IHsKICAgIHRlYW06ICJyZXNpZGVudCIKICAgIG1lbW9yeTogcmVjZW50KDMpCiAgICBzZWVzOiBub25lCiAgICBjb3VudDogNTAwCiAgfQoKICByb2xlIFBhdGllbnRaZXJvIHsKICAgIHRlYW06ICJyZXNpZGVudCIKICAgIG1lbW9yeTogcmVjZW50KDMpCiAgICBzZWVzOiBub25lCiAgICBjb3VudDogMjAKICB9CgogIHJvbGUgT2ZmaWNpYWwgewogICAgdGVhbTogImF1dGhvcml0eSIKICAgIG1lbW9yeTogcmVjZW50KDEwKQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDEwMAogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDE1MAogICAgaGVpZ2h0OiAxNTAKICAgIGxvY2F0aW9uIEJsb2NrICAgIHsgdGFnOiAicmVzaWRlbnRpYWwiLCBjb3VudDogMjYwIH0KICAgIGxvY2F0aW9uIENpdHlIYWxsIHsgdGFnOiAiYXV0aG9yaXR5IiwgY291bnQ6IDEgfQogIH0KCiAgZm4gd2FuZGVyKGFnZW50LCBjaG9pY2VzKSB7CiAgICBsZXQgZGVzdCA9IHJhbmRvbV9jaG9pY2UoY2hvaWNlcykKICAgIG1vdmVfdG8oYWdlbnQsIGRlc3QpCiAgfQoKICBwaGFzZSBTZXR1cCB7CiAgICBzcGF3bl9hZ2VudHNfYXQod2l0aF9yb2xlKCJSZXNpZGVudCIpLCAicmVzaWRlbnRpYWwiKQogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiUGF0aWVudFplcm8iKSwgInJlc2lkZW50aWFsIikKICAgIHNwYXduX2FnZW50c19hdCh3aXRoX3JvbGUoIk9mZmljaWFsIiksICJhdXRob3JpdHkiKQogICAgZm9yIHAgaW4gd2l0aF9yb2xlKCJQYXRpZW50WmVybyIpIHsKICAgICAgZWxpbWluYXRlKHAsICJpbmRleCBjYXNlIikKICAgIH0KICB9CgogIHBoYXNlIFNwcmVhZCB7CiAgICBsZXQgb2ZmaWNpYWxzID0gd2l0aF9yb2xlKCJPZmZpY2lhbCIpCiAgICBsZXQgcG9saWN5ID0gYXNrX2Nob2ljZV9hbGwob2ZmaWNpYWxzLCAiU2hvdWxkIHRoZSBjaXR5IGVuYWN0IGEgbG9ja2Rvd24gdGhpcyByb3VuZD8iLCBbIkxvY2tkb3duIiwgIlN0YXkgb3BlbiJdKQogICAgbGV0IGxvY2tkb3duX3ZvdGVzID0gMAogICAgZm9yIG8gaW4gb2ZmaWNpYWxzIHsKICAgICAgaWYgcG9saWN5W29dID09ICJMb2NrZG93biIgewogICAgICAgIGxvY2tkb3duX3ZvdGVzID0gbG9ja2Rvd25fdm90ZXMgKyAxCiAgICAgIH0KICAgIH0KCiAgICBsZXQgcmFkaXVzID0gNgogICAgaWYgbG9ja2Rvd25fdm90ZXMgKiAyID49IGNvdW50KG9mZmljaWFscykgewogICAgICByYWRpdXMgPSAyCiAgICAgIGJyb2FkY2FzdCgiQ2l0eSBIYWxsIGVuYWN0cyBhIGxvY2tkb3duLiIpCiAgICB9IGVsc2UgewogICAgICBicm9hZGNhc3QoIkNpdHkgSGFsbCBrZWVwcyB0aGUgY2l0eSBvcGVuLiIpCiAgICB9CgogICAgbGV0IGNob2ljZXMgPSBsb2NhdGlvbnNfYnlfdGFnKCJyZXNpZGVudGlhbCIpCiAgICBmb3IgciBpbiB3aXRoX3JvbGUoIlJlc2lkZW50IikgewogICAgICBpZiByLmFsaXZlIHsKICAgICAgICB3YW5kZXIociwgY2hvaWNlcykKICAgICAgfQogICAgfQoKICAgIGZvciBhIGluIGFsbF9hZ2VudHMoKSB7CiAgICAgIGlmIGEucm9sZSAhPSAiT2ZmaWNpYWwiIGFuZCBub3QgYS5hbGl2ZSB7CiAgICAgICAgbGV0IGNsb3NlID0gbmVhcmJ5KGEsIHJhZGl1cykKICAgICAgICBmb3IgYyBpbiBjbG9zZSB7CiAgICAgICAgICBpZiBjLmFsaXZlIGFuZCBjLnJvbGUgIT0gIk9mZmljaWFsIiB7CiAgICAgICAgICAgIGlmIHJhbmRvbV9jaG9pY2UoW3RydWUsIGZhbHNlLCBmYWxzZSwgZmFsc2UsIGZhbHNlLCBmYWxzZV0pIHsKICAgICAgICAgICAgICBlbGltaW5hdGUoYywgImluZmVjdGVkIikKICAgICAgICAgICAgfQogICAgICAgICAgfQogICAgICAgIH0KICAgICAgfQogICAgfQogIH0KCiAgd2luX2NvbmRpdGlvbiB7CiAgICBsZXQgaW5mZWN0ZWQgPSAwCiAgICBsZXQgcmVzaWRlbnRzID0gMAogICAgZm9yIGEgaW4gYWxsX2FnZW50cygpIHsKICAgICAgaWYgYS5yb2xlICE9ICJPZmZpY2lhbCIgewogICAgICAgIHJlc2lkZW50cyA9IHJlc2lkZW50cyArIDEKICAgICAgICBpZiBub3QgYS5hbGl2ZSB7CiAgICAgICAgICBpbmZlY3RlZCA9IGluZmVjdGVkICsgMQogICAgICAgIH0KICAgICAgfQogICAgfQogICAgaWYgcm91bmQgPj0gNiB7CiAgICAgIGlmIGluZmVjdGVkICogMyA+PSByZXNpZGVudHMgewogICAgICAgIHJldHVybiAib3V0YnJlYWsiCiAgICAgIH0KICAgICAgcmV0dXJuICJjb250YWluZWQiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIGlmIHJvdW5kID09IDEgewogICAgICBydW4gU2V0dXAKICAgIH0KICAgIHJ1biBTcHJlYWQKICAgIGxldCB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgfQp9Cg==",
+};
+
+const EXAMPLE_META = [
+  { file: "mafia.sl", label: "mafia.sl \u2014 hidden roles, 6-10 agents" },
+  { file: "trust_game.sl", label: "trust_game.sl \u2014 cooperate/defect, 2 agents" },
+  { file: "village.sl", label: "village.sl \u2014 hidden roles + world{}, 6-10 agents" },
+  { file: "city.sl", label: "city.sl \u2014 spatial + scale, 5,050 agents" },
+  { file: "outbreak.sl", label: "outbreak.sl \u2014 spatial contagion, 620 agents" },
+];
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const SL_KEYWORDS = "sim agents memory role fn phase win_condition loop world let if else while for in return run break true false null and or not".split(" ");
+const SL_BUILTINS = "ask ask_choice ask_all ask_choice_all broadcast whisper remember reflect alive all_agents with_role team_of eliminate tally count last random_choice str print check_win locations locations_by_tag spawn_agents_at move_to location_of agents_at nearby".split(" ");
+const HL_RE = new RegExp(
+  "(//[^\\n]*)"
+  + '|("(?:\\\\.|[^"\\\\])*")'
+  + "|(\\b\\d+(?:\\.\\d+)?\\b)"
+  + "|(\\b(?:" + SL_KEYWORDS.join("|") + ")\\b)"
+  + "|(\\b(?:" + SL_BUILTINS.join("|") + ")\\b(?=\\())"
+  + "|([A-Za-z_][A-Za-z0-9_]*)",
+  "g"
+);
+
+function highlightSL(code) {
+  let out = "", last = 0, m;
+  HL_RE.lastIndex = 0;
+  while ((m = HL_RE.exec(code))) {
+    out += escapeHtml(code.slice(last, m.index));
+    if (m[1]) out += `<span class="tok-com">${escapeHtml(m[1])}</span>`;
+    else if (m[2]) out += `<span class="tok-str">${escapeHtml(m[2])}</span>`;
+    else if (m[3]) out += `<span class="tok-num">${escapeHtml(m[3])}</span>`;
+    else if (m[4]) out += `<span class="tok-kw">${escapeHtml(m[4])}</span>`;
+    else if (m[5]) out += `<span class="tok-fn">${escapeHtml(m[5])}</span>`;
+    else out += escapeHtml(m[6]);
+    last = HL_RE.lastIndex;
+  }
+  out += escapeHtml(code.slice(last));
+  return out + "\n";
+}
+
+// ---------------------------------------------------------------------------
+// DOM wiring
+// ---------------------------------------------------------------------------
+
+const editor = document.getElementById("editor");
+const highlightEl = document.getElementById("highlight").querySelector("code");
+const gutter = document.getElementById("gutter");
+const lineCount = document.getElementById("line-count");
+const exampleSelect = document.getElementById("example-select");
+const seedInput = document.getElementById("seed-input");
+const runBtn = document.getElementById("run-btn");
+const statusPill = document.getElementById("status-pill");
+const rosterEl = document.getElementById("roster");
+const logEl = document.getElementById("log");
+
+for (const { file, label } of EXAMPLE_META) {
+  const opt = document.createElement("option");
+  opt.value = file; opt.textContent = label;
+  exampleSelect.appendChild(opt);
+}
+
+function refreshGutter() {
+  const n = editor.value.split("\n").length;
+  const nums = []; for (let i = 1; i <= n; i += 1) nums.push(i);
+  gutter.textContent = nums.join("\n");
+  lineCount.textContent = `${n} line${n === 1 ? "" : "s"}`;
+}
+
+function onEditorInput() {
+  highlightEl.innerHTML = highlightSL(editor.value);
+  refreshGutter();
+  syncScroll();
+  try { localStorage.setItem("sociallang-ide-state", JSON.stringify({ example: exampleSelect.value, code: editor.value })); } catch (_) { /* private browsing, etc. */ }
+}
+
+function syncScroll() {
+  document.getElementById("highlight").scrollTop = editor.scrollTop;
+  document.getElementById("highlight").scrollLeft = editor.scrollLeft;
+  gutter.scrollTop = editor.scrollTop;
+}
+
+editor.addEventListener("input", onEditorInput);
+editor.addEventListener("scroll", syncScroll);
+editor.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const start = editor.selectionStart, end = editor.selectionEnd;
+    editor.value = editor.value.slice(0, start) + "  " + editor.value.slice(end);
+    editor.selectionStart = editor.selectionEnd = start + 2;
+    onEditorInput();
+  }
+});
+
+exampleSelect.addEventListener("change", () => {
+  editor.value = b64ToText(EXAMPLE_SOURCE[exampleSelect.value]);
+  onEditorInput();
+});
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".tab-panel").forEach((p) => { p.hidden = p.dataset.panel !== btn.dataset.tab; });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Run pipeline
+// ---------------------------------------------------------------------------
+
+const PALETTE = ["--danger", "--safe", "--accent", "--hue-4", "--hue-5", "--hue-6"];
+const teamColors = new Map();
+function teamColor(team) {
+  if (!team) return "var(--ink-dim)";
+  if (!teamColors.has(team)) teamColors.set(team, `var(${PALETTE[teamColors.size % PALETTE.length]})`);
+  return teamColors.get(team);
+}
+
+function makeRoster(n) {
+  const r = new Map();
+  for (let i = 0; i < n; i += 1) r.set(`model-${i}`, new SocialLang.MockProvider());
+  return r;
+}
+
+function setStatus(state, winner, rounds) {
+  statusPill.className = "status status-" + state;
+  if (state === "running") statusPill.textContent = "running";
+  else if (state === "done") statusPill.textContent = `winner: ${winner === null || winner === undefined ? "none" : winner} \u00B7 ${rounds} round${rounds === 1 ? "" : "s"}`;
+  else if (state === "error") statusPill.textContent = "error \u2014 see case log";
+  else statusPill.textContent = "idle";
+}
+
+function renderRoster(agents) {
+  teamColors.clear();
+  if (agents.length <= 60) {
+    rosterEl.innerHTML = agents.map((a) => `<span class="chip${a.alive ? "" : " chip-dead"}" style="--dot:${teamColor(a.team)}" title="${escapeHtml(a.role)} &middot; ${escapeHtml(a.team)}">${escapeHtml(a.seat)}</span>`).join("");
+  } else {
+    const byTeam = new Map();
+    for (const a of agents) {
+      if (!byTeam.has(a.team)) byTeam.set(a.team, { total: 0, alive: 0 });
+      const rec = byTeam.get(a.team);
+      rec.total += 1; if (a.alive) rec.alive += 1;
+    }
+    rosterEl.innerHTML = Array.from(byTeam.entries()).map(([team, rec]) => `<span class="chip" style="--dot:${teamColor(team)}">${escapeHtml(team)}: ${rec.alive}/${rec.total} alive</span>`).join("");
+  }
+}
+
+function renderLog(result) {
+  const teamBySeat = new Map(result.agents.map((a) => [a.seat, a.team]));
+  const rows = [];
+  let lastRound = null;
+  for (const e of result.log) {
+    if (e.round !== lastRound && e.round !== null && e.round !== undefined) {
+      rows.push(`<div class="log-round">Round ${e.round}</div>`);
+      lastRound = e.round;
+    }
+    const kindTag = e.kind === "print" ? `<span class="log-tag">print</span>` : "";
+    const authorSpan = e.author ? `<span class="log-author" style="--dot:${teamColor(teamBySeat.get(e.author))}">${escapeHtml(e.author)}</span> ` : "";
+    rows.push(`<div class="log-entry log-${escapeHtml(e.kind)}">${kindTag}${authorSpan}${escapeHtml(e.text)}</div>`);
+  }
+  const winnerText = result.winner === null || result.winner === undefined ? "no winner (hit the round cap)" : `winner: <strong>${escapeHtml(String(result.winner))}</strong>`;
+  rows.push(`<div class="log-final">Case closed after ${result.rounds} round${result.rounds === 1 ? "" : "s"} &mdash; ${winnerText}. ${result.agents.length} agent${result.agents.length === 1 ? "" : "s"} on file.</div>`);
+  logEl.innerHTML = rows.join("");
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function renderError(err) {
+  let kind = "Error";
+  if (err instanceof SocialLang.LexError) kind = "Lex error";
+  else if (err instanceof SocialLang.ParseError) kind = "Parse error";
+  else if (err instanceof SocialLang.SLRuntimeError) kind = "Runtime error";
+  logEl.innerHTML = `<div class="log-error"><strong>${kind}</strong>\n${escapeHtml(err.message)}</div>`;
+  rosterEl.innerHTML = "";
+}
+
+let running = false;
+
+function runCurrent() {
+  if (running) return;
+  running = true;
+  runBtn.disabled = true;
+  setStatus("running");
+  logEl.innerHTML = `<div class="log-empty">Running&hellip;</div>`;
+  // Let the "running" status paint before a heavy synchronous run (e.g. city.sl,
+  // 5,050 agents) blocks the main thread.
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      try {
+        const seedRaw = seedInput.value.trim();
+        const seed = seedRaw === "" ? undefined : Number(seedRaw);
+        const { result } = SocialLang.runSource(editor.value, makeRoster(32), { seed, maxRounds: 200 });
+        renderRoster(result.agents);
+        renderLog(result);
+        setStatus("done", result.winner, result.rounds);
+      } catch (err) {
+        renderError(err);
+        setStatus("error");
+      } finally {
+        running = false;
+        runBtn.disabled = false;
+      }
+    }, 0);
+  });
+}
+
+runBtn.addEventListener("click", runCurrent);
+
+// ---------------------------------------------------------------------------
+// Field Manual (tutorial) content
+// ---------------------------------------------------------------------------
+
+document.querySelector('[data-panel="manual"]').innerHTML = `
+<div class="manual">
+  <h3>The shape of a program</h3>
+  <p>A program is exactly one <code>sim Name { }</code> block. Everything else nests inside it, in any order:</p>
+  <ul>
+    <li><code>agents: 6..10</code> &mdash; population size, fixed or a range redrawn each run.</li>
+    <li><code>role Name { team, memory, sees, count }</code> &mdash; a kind of seat. At most one role may use <code>count: remainder</code>, which absorbs whatever's left.</li>
+    <li><code>world { width, height, location Type { tag, capacity, count } }</code> &mdash; optional. Declares kinds of places and how many; the interpreter scatters them across the grid at start.</li>
+    <li><code>memory name(params) { }</code> and <code>fn name(params) { }</code> &mdash; custom memory patterns and ordinary functions, both written in SocialLang itself.</li>
+    <li><code>phase Name { }</code> &mdash; a block of logic, invoked with <code>run Name</code>.</li>
+    <li><code>win_condition { }</code> &mdash; checked via <code>check_win()</code>; <code>return value</code> reports a winner, falling off the end means "no winner yet."</li>
+    <li><code>loop { }</code> &mdash; the main loop, one iteration per round. <code>return value</code> anywhere inside ends the sim.</li>
+  </ul>
+  <p>Inside any block: <code>let</code>, assignment, <code>if/else if/else</code>, <code>while</code>, <code>for x in expr</code>, <code>return</code>, <code>break</code>, and calls. Expressions: numbers, strings, <code>true/false/null</code>, <code>[list]</code> and <code>{k: v}</code> dict literals, <code>and/or/not</code>, comparisons, arithmetic, <code>.attr</code>, <code>[index]</code>.</p>
+
+  <h3>Memory patterns</h3>
+  <table>
+    <tr><th>Pattern</th><th>Behavior</th></tr>
+    <tr><td><code>full_history</code></td><td>Every visible event, unfiltered.</td></tr>
+    <tr><td><code>recent(n)</code></td><td>The last <code>n</code> visible events.</td></tr>
+    <tr><td><code>generative(k)</code></td><td>Top-<code>k</code> by recency + importance + relevance, from Park et al. 2023's memory-stream retrieval.</td></tr>
+  </table>
+  <p>Anything else names a custom <code>memory name(params) { }</code> block, run as ordinary code with <code>events</code> and <code>query</code> bound.</p>
+
+  <h3>Builtins</h3>
+  <table>
+    <tr><th>Function</th><th>Does</th></tr>
+    <tr><td><code>ask</code> / <code>ask_choice</code></td><td>Calls an agent's model; <code>ask_choice</code> constrains the reply to one option.</td></tr>
+    <tr><td><code>ask_all</code> / <code>ask_choice_all</code></td><td>Bulk versions &mdash; every call fires concurrently, returning <code>{agent: result}</code>. How a game's LLM tier scales past a handful of agents.</td></tr>
+    <tr><td><code>broadcast</code> / <code>whisper</code></td><td>Publish an event to everyone, or only to a given list of agents.</td></tr>
+    <tr><td><code>remember</code> / <code>reflect</code></td><td>Add a private note; synthesize 1-3 insights from retrieved memory.</td></tr>
+    <tr><td><code>alive()</code> / <code>all_agents()</code></td><td>Living agents / every agent regardless of status.</td></tr>
+    <tr><td><code>with_role(name)</code> / <code>team_of(a)</code></td><td>Agents holding a role; that agent's team.</td></tr>
+    <tr><td><code>eliminate</code> / <code>tally</code></td><td>Mark an agent dead; pick the majority target from a vote dict.</td></tr>
+    <tr><td><code>locations()</code> / <code>locations_by_tag</code></td><td>Procedurally-placed locations from <code>world {}</code>.</td></tr>
+    <tr><td><code>spawn_agents_at</code> / <code>move_to</code></td><td>Place or move an agent spatially.</td></tr>
+    <tr><td><code>location_of</code> / <code>agents_at</code> / <code>nearby</code></td><td>Spatial queries.</td></tr>
+    <tr><td><code>count</code>, <code>last</code>, <code>random_choice</code>, <code>str</code>, <code>print</code>, <code>check_win</code></td><td>Utility.</td></tr>
+  </table>
+
+  <h3>Scaling without new syntax</h3>
+  <p>There's no special "scripted vs. LLM" keyword. <code>role { count: 5000 }</code> and an ordinary <code>fn</code> already suffice &mdash; see <strong>city.sl</strong> and <strong>outbreak.sl</strong> in the picker: most agents are moved by a plain function with zero LLM calls, while a small role is asked something every round via <code>ask_choice_all</code>.</p>
+
+  <div class="callout"><strong>What this page doesn't show:</strong> <code>world {}</code> positions aren't drawn here &mdash; this is a text console, not a map. The repo's Unity viewer renders agents and locations live as points on a 2D map instead.</div>
+
+  <h3>One difference from the real thing</h3>
+  <p>Every "LLM call" here is answered by a mock agent (picks a legal option when one's offered, otherwise a generic line) &mdash; a public page can't safely hold real API keys. The full Python implementation (<code>sociallang run</code>) plays these same files with real models, streams a run live over WebSocket, and exports JSON/HTML replays.</p>
+</div>`;
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+(function boot() {
+  let initialExample = "mafia.sl";
+  let initialCode = b64ToText(EXAMPLE_SOURCE[initialExample]);
+  try {
+    const saved = JSON.parse(localStorage.getItem("sociallang-ide-state") || "null");
+    if (saved && typeof saved.code === "string" && saved.code.trim() !== "") {
+      initialCode = saved.code;
+      if (saved.example && EXAMPLE_SOURCE[saved.example]) initialExample = saved.example;
+    }
+  } catch (_) { /* ignore */ }
+
+  exampleSelect.value = initialExample;
+  editor.value = initialCode;
+  onEditorInput();
+  runCurrent();
+})();
+
+})();
+</script>

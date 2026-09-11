@@ -170,6 +170,15 @@ calls, while a small role is asked something every round via `ask_choice_all`. A
 Full language reference, grammar details, and design rationale (including what isn't
 implemented yet) live in [DESIGN.md](DESIGN.md).
 
+## Try it in the browser, no install
+
+`web/index.html` is a self-contained IDE — SocialLang's lexer, parser, and
+interpreter ported to JavaScript, running entirely client-side. Open it directly (or
+`python -m http.server 8000 --directory web`), pick from all five example games, and
+run them against a mock LLM provider. See [web/README.md](web/README.md) for what's
+different from the real Python implementation (no real API calls, no concurrency,
+no spatial rendering — that's what the CLI and Unity viewer below are for).
+
 ## Setup
 
 ```
