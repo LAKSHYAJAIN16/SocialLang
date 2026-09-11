@@ -1,6 +1,6 @@
 import time
 
-from sociallang.lang.interpreter import run_source
+from sociallang.lang.interpreter import SLRuntimeError, run_source
 from sociallang.lang.parser import parse
 from sociallang.providers.base import ChatProvider, ProviderResponse
 
@@ -193,3 +193,48 @@ def test_ask_choice_all_results_are_applied_in_deterministic_agent_order():
     ask_authors = [e.author for e in interp.events if e.kind == "ask"]
     assert ask_authors == [a.seat for a in agents]
     assert set(picks.keys()) == set(agents)
+
+
+def test_ask_choice_all_with_max_workers_zero_still_runs_instead_of_crashing():
+    # ThreadPoolExecutor(max_workers=0) raises ValueError -- max_workers is clamped
+    # to at least 1 before being passed through, regardless of what a script asks for.
+    source = """
+    sim ZeroWorkers {
+      agents: 3
+      role P { team: "t" memory: full_history sees: none count: 3 }
+      win_condition { return "done" }
+      loop {
+        let picks = ask_choice_all(alive(), "pick one", ["a", "b"], max_workers=0)
+        print(count(picks))
+        return check_win()
+      }
+    }
+    """
+    roster = {f"m{i}": (None, FixedProvider("a")) for i in range(3)}
+    result = run_source(source, roster, seed=0, max_rounds=1)
+    prints = [e["text"] for e in result["log"] if e["kind"] == "print"]
+    assert prints[0] == "3"
+
+
+def test_duplicate_location_type_names_raise_instead_of_silently_colliding():
+    source = """
+    sim DupWorld {
+      agents: 1
+      role Solo { team: "t" memory: full_history sees: none count: 1 }
+      world {
+        width: 10
+        height: 10
+        location Spot { tag: "a", count: 2 }
+        location Spot { tag: "b", count: 3 }
+      }
+      win_condition { return "done" }
+      loop { return check_win() }
+    }
+    """
+    roster = {"a": (None, FixedProvider("ok"))}
+    try:
+        run_source(source, roster, seed=0, max_rounds=1)
+        assert False, "expected SLRuntimeError for duplicate location type name"
+    except SLRuntimeError as exc:
+        assert "duplicate location type" in str(exc)
+        assert "Spot" in str(exc)

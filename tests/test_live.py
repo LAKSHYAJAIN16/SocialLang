@@ -88,6 +88,34 @@ def test_live_bridge_streams_world_snapshots_events_and_done_in_order():
     assert any(m["text"] == "round happened" for m in event_msgs)
 
 
+def test_broadcast_sync_does_not_crash_when_a_slow_client_times_out(monkeypatch):
+    # _broadcast_sync waits up to 5s for the broadcast coroutine; a slow/stuck
+    # client's ws.send() can block past that via websockets' own backpressure
+    # handling. That used to raise TimeoutError straight out of emit_event() and
+    # crash the whole simulation -- simulate it (without an actual 5s wait) and
+    # confirm every emit_* call now just swallows it instead.
+    import sociallang.engine.live as live_module
+
+    class FakeFuture:
+        def result(self, timeout=None):
+            raise TimeoutError("simulated slow/stuck client")
+
+    def fake_run_coroutine_threadsafe(coro, loop):
+        coro.close()  # avoid an "coroutine was never awaited" warning
+        return FakeFuture()
+
+    sink = WebSocketSink(host="localhost", port=0)
+    try:
+        monkeypatch.setattr(live_module.asyncio, "run_coroutine_threadsafe", fake_run_coroutine_threadsafe)
+        sink.emit_world(10, 10, [])
+        sink.emit_agents_snapshot([])
+        sink.emit_event({"seq": 1, "round": 1, "kind": "broadcast", "text": "hi", "author": None, "visible_to": None})
+        sink.emit_done("done", 1)
+    finally:
+        monkeypatch.undo()
+        sink.close()
+
+
 def test_live_bridge_agents_snapshot_reflects_spawned_positions():
     received = _collect_messages_while_running(SOURCE, max_rounds=1)
     snapshots = [m for m in received if m["type"] == "agents_snapshot"]

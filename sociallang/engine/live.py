@@ -96,7 +96,16 @@ class WebSocketSink:
     def _broadcast_sync(self, message: dict) -> None:
         data = json.dumps(message, default=str)
         future = asyncio.run_coroutine_threadsafe(self._broadcast_async(data), self._loop)
-        future.result(timeout=5)
+        try:
+            future.result(timeout=5)
+        except TimeoutError:
+            # A slow/stuck client (paused debugger, backed-up network) can make
+            # ws.send() block past this timeout via websockets' own backpressure
+            # handling. Don't let one misbehaving viewer crash the whole
+            # simulation -- the broadcast keeps running on the event-loop thread
+            # (and that client gets pruned on its next failed send in
+            # _broadcast_async); we just stop waiting for it here.
+            pass
 
     # -- LiveSink API (called from the interpreter's thread) --
 

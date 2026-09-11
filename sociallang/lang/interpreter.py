@@ -228,7 +228,14 @@ class Interpreter:
         (many locations relative to grid area) can't spin forever.
         """
         w, h = self.world.width, self.world.height
+        seen_names: set[str] = set()
         for lt in self.world.location_types:
+            if lt.name in seen_names:
+                raise SLRuntimeError(
+                    f"world {{ }}: duplicate location type '{lt.name}' -- location type names must be unique "
+                    "(their instances share an id prefix, so a second declaration silently overwrites the first)"
+                )
+            seen_names.add(lt.name)
             for i in range(lt.count):
                 loc_id = f"{lt.name}_{i}"
                 x, y = self._scatter_point(w, h)
@@ -629,7 +636,7 @@ class Interpreter:
         prompt: str = args[1]
         temperature = float(kwargs.get("temperature", 0.9))
         max_tokens = int(kwargs.get("max_tokens", 500))
-        max_workers = int(kwargs.get("max_workers", 16))
+        max_workers = max(int(kwargs.get("max_workers", 16)), 1)
 
         prepared = []
         for agent in agents_list:
