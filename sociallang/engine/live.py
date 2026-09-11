@@ -44,7 +44,9 @@ class WebSocketSink:
     done (e.g. after interp.run() returns).
     """
 
-    def __init__(self, host: str = "localhost", port: int = 8765, ready_timeout: float = 5.0):
+    def __init__(
+        self, host: str = "localhost", port: int = 8765, ready_timeout: float = 5.0, broadcast_timeout: float = 1.0
+    ):
         import websockets  # imported lazily so the rest of the package has no hard dep
 
         self._websockets = websockets
@@ -52,6 +54,17 @@ class WebSocketSink:
         self.port = port
         self._clients: set = set()
         self._server = None
+        # A slow/stuck client can make ws.send() block via websockets' own
+        # backpressure handling; this bounds how long one misbehaving viewer can
+        # stall the simulation thread per emitted event (see _broadcast_sync).
+        self._broadcast_timeout = broadcast_timeout
+        # Interpreter.run() emits "world"/"agents_snapshot" exactly once each, right
+        # before the round loop starts -- so a viewer that connects (or reconnects)
+        # any time after that would otherwise never see them. Caching the last of
+        # each lets a newly-connected client catch up immediately instead of seeing
+        # a blank world/roster until the next round happens to re-emit one.
+        self._last_world: str | None = None
+        self._last_agents: str | None = None
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -68,6 +81,13 @@ class WebSocketSink:
     async def _serve(self) -> None:
         async def handler(ws) -> None:
             self._clients.add(ws)
+            try:
+                if self._last_world is not None:
+                    await ws.send(self._last_world)
+                if self._last_agents is not None:
+                    await ws.send(self._last_agents)
+            except Exception:
+                pass  # let it register for live pushes regardless; catch-up is best-effort
             try:
                 async for _msg in ws:
                     pass  # this bridge is push-only; incoming client messages are ignored
@@ -93,19 +113,19 @@ class WebSocketSink:
         for ws in stale:
             self._clients.discard(ws)
 
-    def _broadcast_sync(self, message: dict) -> None:
-        data = json.dumps(message, default=str)
+    def _broadcast_data_sync(self, data: str) -> None:
         future = asyncio.run_coroutine_threadsafe(self._broadcast_async(data), self._loop)
         try:
-            future.result(timeout=5)
+            future.result(timeout=self._broadcast_timeout)
         except TimeoutError:
-            # A slow/stuck client (paused debugger, backed-up network) can make
-            # ws.send() block past this timeout via websockets' own backpressure
-            # handling. Don't let one misbehaving viewer crash the whole
-            # simulation -- the broadcast keeps running on the event-loop thread
-            # (and that client gets pruned on its next failed send in
+            # Don't let one misbehaving viewer crash (or seriously stall) the
+            # whole simulation -- the broadcast keeps running on the event-loop
+            # thread (and that client gets pruned on its next failed send in
             # _broadcast_async); we just stop waiting for it here.
             pass
+
+    def _broadcast_sync(self, message: dict) -> None:
+        self._broadcast_data_sync(json.dumps(message, default=str))
 
     # -- LiveSink API (called from the interpreter's thread) --
 
@@ -113,10 +133,14 @@ class WebSocketSink:
         self._broadcast_sync({"type": "event", **event})
 
     def emit_agents_snapshot(self, agents: list[dict]) -> None:
-        self._broadcast_sync({"type": "agents_snapshot", "agents": agents})
+        data = json.dumps({"type": "agents_snapshot", "agents": agents}, default=str)
+        self._last_agents = data
+        self._broadcast_data_sync(data)
 
     def emit_world(self, width: int, height: int, locations: list[dict]) -> None:
-        self._broadcast_sync({"type": "world", "width": width, "height": height, "locations": locations})
+        data = json.dumps({"type": "world", "width": width, "height": height, "locations": locations}, default=str)
+        self._last_world = data
+        self._broadcast_data_sync(data)
 
     def emit_done(self, winner: Any, rounds: int) -> None:
         self._broadcast_sync({"type": "done", "winner": winner, "rounds": rounds})

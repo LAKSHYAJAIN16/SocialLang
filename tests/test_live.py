@@ -116,6 +116,74 @@ def test_broadcast_sync_does_not_crash_when_a_slow_client_times_out(monkeypatch)
         sink.close()
 
 
+def test_late_connecting_client_receives_catch_up_world_and_agents_snapshot():
+    # Interpreter.run() emits "world"/"agents_snapshot" exactly once each, right
+    # before the round loop starts -- a client connecting (or reconnecting) any
+    # time after that used to just never see them. Simulate a run that already
+    # emitted its initial state before any viewer connected, then connect one.
+    sink = WebSocketSink(host="localhost", port=0)
+    try:
+        sink.emit_world(10, 10, [{"id": "Spot_0", "type": "Spot", "tag": "x", "capacity": None, "x": 1.0, "y": 2.0}])
+        sink.emit_agents_snapshot([
+            {"seat": "P1", "role": "P", "team": "t", "model": "m", "alive": True,
+             "death_cause": None, "x": 1.0, "y": 2.0, "location_id": "Spot_0"},
+        ])
+
+        received: list[dict] = []
+
+        async def client_loop() -> None:
+            uri = f"ws://localhost:{sink.port}"
+            async with websockets.connect(uri) as ws:
+                for _ in range(2):
+                    msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                    received.append(json.loads(msg))
+
+        asyncio.run(client_loop())
+    finally:
+        sink.close()
+
+    assert [m["type"] for m in received] == ["world", "agents_snapshot"]
+    assert received[0]["locations"][0]["id"] == "Spot_0"
+    assert received[1]["agents"][0]["seat"] == "P1"
+
+
+def test_print_reaches_the_live_sink_like_every_other_event():
+    # print() used to only append to run_log, bypassing the sink entirely -- so it
+    # showed up when a saved run was replayed (it's right there in the JSON's "log")
+    # but never reached a --live viewer watching the identical run in progress.
+    class RecordingSink:
+        def __init__(self):
+            self.events = []
+
+        def emit_world(self, width, height, locations):
+            pass
+
+        def emit_agents_snapshot(self, agents):
+            pass
+
+        def emit_event(self, event):
+            self.events.append(event)
+
+        def emit_done(self, winner, rounds):
+            pass
+
+    source = """
+    sim PrintTest {
+      agents: 1
+      role Solo { team: "t" memory: full_history sees: none count: 1 }
+      win_condition { return "done" }
+      loop {
+        print("hello from print")
+        return check_win()
+      }
+    }
+    """
+    roster = {"a": (None, FixedProvider("ok"))}
+    sink = RecordingSink()
+    run_source(source, roster, seed=0, max_rounds=1, sink=sink)
+    assert any(e["kind"] == "print" and e["text"] == "hello from print" for e in sink.events)
+
+
 def test_live_bridge_agents_snapshot_reflects_spawned_positions():
     received = _collect_messages_while_running(SOURCE, max_rounds=1)
     snapshots = [m for m in received if m["type"] == "agents_snapshot"]

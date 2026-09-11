@@ -587,21 +587,46 @@ class Interpreter:
             return str(int(v)) if v.is_integer() else str(v)
         return str(v)
 
+    def _identity_for(self, agent: Agent, role: "RoleDecl") -> str:
+        identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
+        if role.sees == "teammates":
+            teammates = [a.seat for a in self.agents if a is not agent and a.role_name == role.name]
+            if teammates:
+                identity += f" Your teammates are: {', '.join(teammates)}."
+        return identity
+
+    def _prompt_pieces(self, agent: Agent, prompt: str) -> tuple[str, str]:
+        """Returns (identity, user_prompt) for one ask() call -- shared by the
+        single-agent and bulk builtins so their prompt construction can't drift.
+        """
+        context = self.build_context_for(agent, prompt)
+        role = self.roles[agent.role_name]
+        identity = self._identity_for(agent, role)
+        user_prompt = f"What has happened so far:\n{context}\n\nNow: {prompt}"
+        return identity, user_prompt
+
+    @staticmethod
+    def _match_option(text: str, options: list[Any], labels: list[str], rng: random.Random) -> Any:
+        """Shared by ask_choice and ask_choice_all: exact match first, then
+        substring, then a random legal fallback -- never returns something
+        outside `options`.
+        """
+        norm = text.strip().strip(".\"'").lower()
+        for o, lab in zip(options, labels):
+            if lab.lower() == norm:
+                return o
+        for o, lab in zip(options, labels):
+            if lab.lower() in text.lower():
+                return o
+        return rng.choice(options) if options else None
+
     def _bi_ask(self, args: list[Any], kwargs: dict[str, Any]) -> str:
         agent: Agent = args[0]
         prompt: str = args[1]
         temperature = float(kwargs.get("temperature", 0.9))
         max_tokens = int(kwargs.get("max_tokens", 500))
 
-        context = self.build_context_for(agent, prompt)
-        role = self.roles[agent.role_name]
-        identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
-        if role.sees == "teammates":
-            teammates = [a.seat for a in self.agents if a is not agent and a.role_name == role.name]
-            if teammates:
-                identity += f" Your teammates are: {', '.join(teammates)}."
-
-        user_prompt = f"What has happened so far:\n{context}\n\nNow: {prompt}"
+        identity, user_prompt = self._prompt_pieces(agent, prompt)
         resp = agent.provider.complete(identity, user_prompt, temperature=temperature, max_tokens=max_tokens)
         text = resp.text or ""
         self._append_event(kind="ask", text=f"(asked: {prompt}) {text}", author=agent.seat, visible_to={agent.seat})
@@ -612,25 +637,18 @@ class Interpreter:
         labels = [self._stringify(o) for o in options]
         full_prompt = f"{prompt}\n\nRespond with exactly one of: {', '.join(labels)}"
         text = self._bi_ask([agent, full_prompt], kwargs)
-        norm = text.strip().strip(".\"'").lower()
-        for o, lab in zip(options, labels):
-            if lab.lower() == norm:
-                return o
-        for o, lab in zip(options, labels):
-            if lab.lower() in text.lower():
-                return o
-        return self.rng.choice(options) if options else None
+        return self._match_option(text, options, labels, self.rng)
 
     def _bi_ask_all(self, args: list[Any], kwargs: dict[str, Any]) -> dict[Agent, str]:
         """Like ask(), but for many agents at once: builds every agent's prompt (pure,
-        single-threaded, deterministic), then fires all provider.complete() calls
-        concurrently via a thread pool -- ChatProvider.complete is a stateless,
-        blocking HTTP call with no shared mutable state per provider instance, so
-        this is safe with zero provider-side changes. This is what makes a
-        few-hundred-agent LLM-tier batch cost roughly one round-trip instead of N
-        serial ones. Results are applied to the event log in agent-list order
-        (Executor.map preserves input order), not completion order, so a run stays
-        reproducible under --seed. Returns {agent: response_text}.
+        single-threaded, deterministic, via the same _prompt_pieces() ask() uses),
+        then fires all provider.complete() calls concurrently via a thread pool --
+        ChatProvider.complete is a stateless, blocking HTTP call with no shared
+        mutable state per provider instance, so this is safe with zero provider-side
+        changes. This is what makes a few-hundred-agent LLM-tier batch cost roughly
+        one round-trip instead of N serial ones. Results are applied to the event
+        log in agent-list order (Executor.map preserves input order), not completion
+        order, so a run stays reproducible under --seed. Returns {agent: response_text}.
         """
         agents_list: list[Agent] = args[0]
         prompt: str = args[1]
@@ -638,21 +656,11 @@ class Interpreter:
         max_tokens = int(kwargs.get("max_tokens", 500))
         max_workers = max(int(kwargs.get("max_workers", 16)), 1)
 
-        prepared = []
-        for agent in agents_list:
-            context = self.build_context_for(agent, prompt)
-            role = self.roles[agent.role_name]
-            identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
-            if role.sees == "teammates":
-                teammates = [a.seat for a in self.agents if a is not agent and a.role_name == role.name]
-                if teammates:
-                    identity += f" Your teammates are: {', '.join(teammates)}."
-            user_prompt = f"What has happened so far:\n{context}\n\nNow: {prompt}"
-            prepared.append((agent, identity, user_prompt))
+        prepared = [(agent, *self._prompt_pieces(agent, prompt)) for agent in agents_list]
 
         def call_one(item: tuple[Agent, str, str]) -> str:
-            agent, identity, user_prompt = item
-            resp = agent.provider.complete(identity, user_prompt, temperature=temperature, max_tokens=max_tokens)
+            _agent, identity, user_prompt = item
+            resp = _agent.provider.complete(identity, user_prompt, temperature=temperature, max_tokens=max_tokens)
             return resp.text or ""
 
         if not prepared:
@@ -672,18 +680,7 @@ class Interpreter:
         labels = [self._stringify(o) for o in options]
         full_prompt = f"{prompt}\n\nRespond with exactly one of: {', '.join(labels)}"
         texts = self._bi_ask_all([agents_list, full_prompt], kwargs)
-
-        results: dict[Agent, Any] = {}
-        for agent in agents_list:
-            text = texts[agent]
-            norm = text.strip().strip(".\"'").lower()
-            chosen = next((o for o, lab in zip(options, labels) if lab.lower() == norm), None)
-            if chosen is None:
-                chosen = next((o for o, lab in zip(options, labels) if lab.lower() in text.lower()), None)
-            if chosen is None:
-                chosen = self.rng.choice(options) if options else None
-            results[agent] = chosen
-        return results
+        return {agent: self._match_option(texts[agent], options, labels, self.rng) for agent in agents_list}
 
     def _bi_broadcast(self, args: list[Any]) -> None:
         if len(args) == 1:
@@ -768,7 +765,14 @@ class Interpreter:
 
     def _bi_print(self, value: Any) -> None:
         text = self._stringify(value)
-        self.run_log.append({"seq": None, "round": self.round, "kind": "print", "text": text, "author": None, "visible_to": None})
+        entry = {"seq": None, "round": self.round, "kind": "print", "text": text, "author": None, "visible_to": None}
+        self.run_log.append(entry)
+        # Stream to the live sink too (see sociallang/engine/live.py) -- otherwise
+        # print() output shows up when a saved run is replayed (it's right there in
+        # the JSON's "log") but silently never reaches a --live viewer watching the
+        # identical run, which is a confusing divergence between the two viewing modes.
+        if self.sink is not None:
+            self.sink.emit_event(entry)
 
     def _check_win(self) -> Any:
         if self.sim.win_condition is None:
