@@ -108,6 +108,7 @@
     content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
     display: inline-block; margin-right: 7px; animation: pulse 1s ease-in-out infinite;
   }
+  .status-stepping { color: var(--accent); border-color: var(--accent); }
   .status-error { background: var(--danger-ink); color: var(--danger); border-color: var(--danger); }
   .status-done { background: var(--safe-ink); color: var(--safe); border-color: var(--safe); }
   @media (prefers-reduced-motion: reduce) { .status-running::before { animation: none; } }
@@ -217,6 +218,9 @@
   }
   .sandbox-btn:hover { border-color: var(--accent); color: var(--accent); }
   .sandbox-btn:disabled { opacity: 0.45; cursor: default; border-color: var(--line); color: var(--ink-dim); }
+  .sandbox-btn-accent { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .sandbox-btn-accent:hover { color: var(--accent-ink); filter: brightness(1.08); }
+  .sandbox-btn-accent:disabled { background: var(--surface); color: var(--ink-dim); }
   .sandbox-legend { display: flex; flex-wrap: wrap; gap: 8px; font: 500 11px/1 var(--font-body); color: var(--ink-dim); }
   .sandbox-legend .swatch { display: inline-flex; align-items: center; gap: 4px; }
   .sandbox-legend .swatch::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--ink-dim)); display: inline-block; }
@@ -329,6 +333,8 @@
         <h2>Sandbox &mdash; live map</h2>
         <div class="sandbox-controls">
           <span class="sandbox-legend" id="sandbox-legend"></span>
+          <button class="sandbox-btn sandbox-btn-accent" id="step-btn" title="Advance exactly one round -- drag a location between steps and the next round reacts to it live">Step &#9656;</button>
+          <button class="sandbox-btn" id="stop-step-btn" title="End this step session (back to normal Run)" hidden>End stepping</button>
           <button class="sandbox-btn" id="randomize-layout-btn" title="Draw a new random layout at the current seed">Randomize layout</button>
           <button class="sandbox-btn" id="reset-layout-btn" title="Discard drags, back to the last randomized/loaded layout">Reset drags</button>
         </div>
@@ -936,19 +942,35 @@ class Interpreter {
       : (this.world ? setupWorldLocations(this.world, this.rng) : new Map());
   }
 
-  run(maxRounds = 200, onProgress = null) {
+  // Advances exactly one round (one execution of sim.loop's body) and returns
+  // { done, winner }. Exists as its own method -- not just inlined into run()'s
+  // for-loop -- so a caller (the Sandbox's interactive Step mode) can drive one
+  // round at a time on a live Interpreter instance, e.g. to let a location drag
+  // between steps actually change what the NEXT round's nearby()/move_to() see.
+  stepOnce() {
     if (!this.sim.loop) throw new SLRuntimeError("sim has no `loop` block");
+    this.round += 1;
+    this.globalEnv.define("round", this.round);
+    let done = false, winner = null;
+    try { this.execBlock(this.sim.loop, new Env(this.globalEnv)); }
+    catch (e) {
+      if (e instanceof ReturnSignal) { done = true; winner = e.value; }
+      else if (e instanceof BreakSignal) { done = true; }
+      else throw e;
+    }
+    if (this.sink) this.sink.onAgents(this._agentsSnapshot());
+    return { done, winner };
+  }
+
+  run(maxRounds = 200, onProgress = null) {
     if (this.sink) { if (this.world) this.sink.onWorld(this._worldSnapshot()); this.sink.onAgents(this._agentsSnapshot()); }
     let winner = null;
     for (let i = 0; i < maxRounds; i += 1) {
-      this.round += 1;
-      this.globalEnv.define("round", this.round);
-      try { this.execBlock(this.sim.loop, new Env(this.globalEnv)); }
-      catch (e) { if (e instanceof ReturnSignal) { winner = e.value; break; } if (e instanceof BreakSignal) break; throw e; }
-      if (this.sink) this.sink.onAgents(this._agentsSnapshot());
+      const step = this.stepOnce();
       if (onProgress) onProgress(this.round);
+      if (step.done) { winner = step.winner; break; }
     }
-    if (this.sink) { this.sink.onAgents(this._agentsSnapshot()); this.sink.onDone(winner, this.round); }
+    if (this.sink) this.sink.onDone(winner, this.round);
     return {
       winner, rounds: this.round, log: this.runLog, agents: this._agentsSnapshot(),
       world: this.world ? { width: this.world.width, height: this.world.height, locations: this._worldSnapshot() } : null,
@@ -957,6 +979,8 @@ class Interpreter {
 
   _agentsSnapshot() { return this.agents.map((a) => ({ seat: a.seat, role: a.roleName, team: a.team, model: a.modelKey, alive: a.alive, deathCause: a.deathCause, x: a.x, y: a.y, locationId: a.locationId })); }
   _worldSnapshot() { return Array.from(this.worldLocations.values()).map((loc) => ({ id: loc.id, type: loc.typeName, tag: loc.tag, capacity: loc.capacity, x: loc.x, y: loc.y })); }
+  getAgentsSnapshot() { return this._agentsSnapshot(); }
+  getWorldSnapshot() { return this.world ? { width: this.world.width, height: this.world.height, locations: this._worldSnapshot() } : null; }
 
   execBlock(block, env) { for (const stmt of block.statements) this.execStmt(stmt, env); }
 
@@ -1469,6 +1493,7 @@ editor.addEventListener("keydown", (e) => {
 });
 
 exampleSelect.addEventListener("change", () => {
+  endStepSession();
   editor.value = b64ToText(EXAMPLE_SOURCE[exampleSelect.value]);
   onEditorInput();
   refreshWorldPreview(true);
@@ -1508,6 +1533,7 @@ function makeRoster(n) {
 function setStatus(state, winner, rounds) {
   statusPill.className = "status status-" + state;
   if (state === "running") statusPill.textContent = "running";
+  else if (state === "stepping") statusPill.textContent = `step ${rounds} \u00B7 live \u2014 drag a location, then Step again`;
   else if (state === "done") statusPill.textContent = `winner: ${winner === null || winner === undefined ? "none" : winner} \u00B7 ${rounds} round${rounds === 1 ? "" : "s"}`;
   else if (state === "error") statusPill.textContent = "error \u2014 see case log";
   else statusPill.textContent = "idle";
@@ -1573,10 +1599,12 @@ const roundScrubber = document.getElementById("round-scrubber");
 const roundLabel = document.getElementById("round-label");
 const randomizeLayoutBtn = document.getElementById("randomize-layout-btn");
 const resetLayoutBtn = document.getElementById("reset-layout-btn");
+const stepBtn = document.getElementById("step-btn");
+const stopStepBtn = document.getElementById("stop-step-btn");
 
 let currentSimWorld = null;          // the current parse's sim.world, or null if this case has none
 let baseWorldLayout = new Map();     // last randomized/loaded layout (pristine Location clones)
-let currentWorldLayout = new Map();  // possibly user-dragged; this is what Run actually uses
+let currentWorldLayout = new Map();  // possibly user-dragged; this is what Run (and Step) actually use
 let lastWorldSignature = null;
 let worldSeedNonce = 0;
 
@@ -1588,6 +1616,15 @@ let selectedAgentSeat = null;
 let draggingLocId = null;
 let hoverLocId = null;
 let lastRunResult = null;
+
+// A live Interpreter kept alive across Step clicks (as opposed to Run, which builds
+// one, runs it to completion, and throws it away) -- this is what makes dragging a
+// location BETWEEN steps actually change the NEXT round's nearby()/move_to() calls:
+// currentWorldLayout's Location objects are the exact same objects stepInterp.
+// worldLocations holds (Interpreter's constructor copies the Map, not the Location
+// values inside it), so mutating one's x/y from the drag handler is instantly visible
+// to the running simulation.
+let stepInterp = null;
 
 function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
 
@@ -1872,6 +1909,7 @@ let running = false;
 
 function runCurrent() {
   if (running) return;
+  endStepSession();
   running = true;
   runBtn.disabled = true;
   setStatus("running");
@@ -1923,6 +1961,91 @@ function runCurrent() {
 runBtn.addEventListener("click", runCurrent);
 
 // ---------------------------------------------------------------------------
+// Step mode: advance one round at a time on a live Interpreter, instead of
+// Run's "compute the whole thing, then replay it." Dragging a location between
+// steps mutates the exact same Location objects stepInterp.worldLocations
+// holds (see the `stepInterp` declaration above for why), so it genuinely
+// changes what the next stepOnce() call sees -- a real poke-and-see tool.
+// ---------------------------------------------------------------------------
+
+let stepDone = false;
+
+function beginStepSession() {
+  const sim = SocialLang.parse(editor.value); // let a parse error propagate to stepCurrent's catch
+  const seedRaw = seedInput.value.trim();
+  const seed = seedRaw === "" ? undefined : Number(seedRaw);
+  const rng = new SocialLang.SeededRandom(seed);
+  const { agents, rolesByName } = SocialLang.assignAgents(sim, makeRoster(32), rng);
+  stepInterp = new SocialLang.Interpreter(sim, agents, rolesByName, {
+    seed, worldLocations: currentSimWorld ? currentWorldLayout : undefined,
+  });
+  stepDone = false;
+  stopPlayback();
+  roundFrames = [];
+  logEl.innerHTML = "";
+  stopStepBtn.hidden = false;
+  randomizeLayoutBtn.disabled = true;
+  resetLayoutBtn.disabled = true;
+}
+
+function endStepSession() {
+  stepInterp = null;
+  stepDone = false;
+  stopStepBtn.hidden = true;
+  randomizeLayoutBtn.disabled = !currentSimWorld;
+  resetLayoutBtn.disabled = !currentSimWorld;
+}
+
+function syncFromStepInterp(done, winner) {
+  const agentsSnap = stepInterp.getAgentsSnapshot();
+  renderRoster(agentsSnap);
+  const fakeResult = { winner: done ? winner : null, rounds: stepInterp.round, log: stepInterp.runLog, agents: agentsSnap };
+  renderLog(fakeResult);
+  lastRunResult = { ...fakeResult, world: stepInterp.getWorldSnapshot() };
+
+  roundFrames.push(agentsSnap);
+  currentFrameIndex = roundFrames.length - 1;
+  roundScrubber.max = String(Math.max(roundFrames.length - 1, 0));
+  roundScrubber.value = String(currentFrameIndex);
+  roundScrubber.disabled = roundFrames.length <= 1;
+  updateRoundLabel();
+  updateInspector();
+  drawSandbox();
+
+  setStatus(done ? "done" : "stepping", winner, stepInterp.round);
+}
+
+function stepCurrent() {
+  if (running) return;
+  try {
+    if (!stepInterp || stepDone) beginStepSession();
+    const { done, winner } = stepInterp.stepOnce();
+    stepDone = done;
+    syncFromStepInterp(done, winner);
+  } catch (err) {
+    renderError(err);
+    setStatus("error");
+    endStepSession();
+  }
+}
+
+stepBtn.addEventListener("click", stepCurrent);
+
+stopStepBtn.addEventListener("click", () => {
+  endStepSession();
+  setStatus("idle");
+  logEl.innerHTML = `<div class="log-empty">Press Run or Step to play this case.</div>`;
+  rosterEl.innerHTML = "";
+  roundFrames = [];
+  currentFrameIndex = 0;
+  roundScrubber.max = "0";
+  roundScrubber.value = "0";
+  roundScrubber.disabled = true;
+  updateRoundLabel();
+  drawSandbox();
+});
+
+// ---------------------------------------------------------------------------
 // Field Manual (tutorial) content
 // ---------------------------------------------------------------------------
 
@@ -1969,7 +2092,7 @@ document.querySelector('[data-panel="manual"]').innerHTML = `
   <h3>Scaling without new syntax</h3>
   <p>There's no special "scripted vs. LLM" keyword. <code>role { count: 5000 }</code> and an ordinary <code>fn</code> already suffice &mdash; see <strong>city.sl</strong> and <strong>outbreak.sl</strong> in the picker: most agents are moved by a plain function with zero LLM calls, while a small role is asked something every round via <code>ask_choice_all</code>.</p>
 
-  <div class="callout"><strong>The Sandbox tab above</strong> renders a <code>world {}</code> case as a live map instead of just log text &mdash; location markers are draggable before you hit Run (the map's own drag handles), and dragging one to a new spot genuinely changes gameplay: <code>nearby()</code>, <code>move_to()</code>, and <code>agents_at()</code> all read positions from wherever you actually put things. After a run, drag the scrubber or hit Play to watch agents move round by round; click a dot for its recent events. The repo's Unity viewer does the same thing for a live/real-model run outside the browser.</div>
+  <div class="callout"><strong>The Sandbox above</strong> renders a <code>world {}</code> case as a live map instead of just log text &mdash; location markers are draggable, and dragging one to a new spot genuinely changes gameplay: <code>nearby()</code>, <code>move_to()</code>, and <code>agents_at()</code> all read positions from wherever you actually put things. <strong>Run</strong> plays the whole case at once, then lets you scrub/Play back through the rounds it captured. <strong>Step</strong> is the interactive one: it advances exactly one round on a live simulation, so you can drag a location <em>between</em> steps and watch the next round actually react to where you put it &mdash; a real poke-and-see tool, not a canned replay. Click a dot for its recent events either way. The repo's Unity viewer does the live-map part too, for a real-model run outside the browser.</div>
 
   <h3>One difference from the real thing</h3>
   <p>Every "LLM call" here is answered by a mock agent (picks a legal option when one's offered, otherwise a generic line) &mdash; a public page can't safely hold real API keys. The full Python implementation (<code>sociallang run</code>) plays these same files with real models, streams a run live over WebSocket, and exports JSON/HTML replays.</p>

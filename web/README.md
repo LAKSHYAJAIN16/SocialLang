@@ -34,11 +34,13 @@ Also published as a Claude Artifact for quick sharing — same file, hosted.
   for real API latency at scale.
 - **The Sandbox map is a rougher approximation than Unity's.** A `world {}` case
   renders as a live 2D canvas (Smallville-style, per Park et al. 2023's demo) with
-  draggable location markers — dragging one before Run actually changes gameplay,
-  since `nearby()`/`move_to()`/`agents_at()` all read from the same layout Run uses.
-  After a run, scrub or Play through the captured per-round agent snapshots. This is
-  a simpler, canvas-only version of what `unity/` does for a live/real-model run —
-  no 3D, no camera controls beyond the implicit pan-free fixed view, and only as many
+  draggable location markers — dragging one changes gameplay, since
+  `nearby()`/`move_to()`/`agents_at()` all read from the same layout Run/Step use.
+  **Run** plays a case to completion and lets you scrub/Play back through the rounds
+  it captured. **Step** advances a live Interpreter one round at a time, so a drag
+  between steps changes what the *next* round actually does — the interactive one.
+  This is a simpler, canvas-only version of what `unity/` does for a live/real-model
+  run — no 3D, no camera controls beyond the implicit pan-free fixed view, and only as many
   animation frames as rounds actually completed (coarser than Unity's live stream).
 
 ## Files
