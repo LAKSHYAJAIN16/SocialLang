@@ -192,6 +192,39 @@ def test_smallville_sl_runs_to_completion_with_mock_provider():
     assert all(a.persona for a in interp.agents)  # settle_in()'s set_persona ran for everyone
 
 
+def test_smallville_mafia_sl_runs_to_completion_with_mock_provider():
+    """Mafia built as a ruleset on top of the Smallville engine, not its own flat
+    night/day loop (that's village.sl/mafia.sl) -- see games/smallville_mafia.sl
+    and its header comment. Checks the same structural things as the smallville.sl
+    test (the Generative Agents builtins actually fired) plus that the Mafia layer
+    on top of them actually ran: a night kill (whisper, hidden from the victim)
+    and a day-vote elimination both happened, and the game reached a real winner.
+    """
+    from sociallang.providers.mock_provider import MockProvider
+
+    roster = {f"mock-{i}": (None, MockProvider("mock", None)) for i in range(8)}
+    result = run_source(_load("smallville_mafia.sl"), roster, seed=1, max_rounds=10)
+
+    assert result["winner"] in ("town", "mafia")
+    assert 6 <= len(result["agents"]) <= 8
+
+    from sociallang.lang.interpreter import Interpreter, assign_agents
+    from sociallang.lang.parser import parse
+    import random
+
+    sim = parse(_load("smallville_mafia.sl"))
+    agents, roles_by_name = assign_agents(sim, roster, random.Random(1))
+    interp = Interpreter(sim, agents, roles_by_name, seed=1)
+    interp.run(max_rounds=10)
+
+    kinds = {e.kind for e in interp.events}
+    assert "plan" in kinds  # every agent -- mafia included -- lived a day, not just voted
+    assert "dialogue" in kinds  # the day's living produced real conversations
+    assert "whisper" in kinds  # the mafia's night kill vote stayed hidden from the target
+    assert any(a.death_cause == "killed in the night" for a in interp.agents)
+    assert all(a.persona for a in interp.agents)  # cover applies to mafia and town alike
+
+
 def test_generative_memory_pattern_uses_the_configured_embedder():
     from sociallang.providers.embeddings import HashEmbeddingProvider
 

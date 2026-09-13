@@ -144,7 +144,10 @@ picking a fixed cadence.
 
 Beyond memory retrieval and reflection (above), the rest of Park et al. 2023's
 architecture — persona, planning, reacting, and dialogue generation — is built in
-too. `games/smallville.sl` runs the whole loop end to end; see its comments and
+too. `games/smallville.sl` runs the whole loop end to end; `games/smallville_mafia.sl`
+then builds a real *other* game on top of it — Mafia's hidden roles and elimination
+votes layered over the same living town, so a day's suspicion comes from actual
+lived dialogue instead of one scripted prompt. See both files' comments and
 [DESIGN.md](DESIGN.md) for how each piece maps onto the paper and where it still
 simplifies it.
 
@@ -197,7 +200,7 @@ implemented yet) live in [DESIGN.md](DESIGN.md).
 
 `web/index.html` is a self-contained IDE — SocialLang's lexer, parser, and
 interpreter ported to JavaScript, running entirely client-side. Open it directly (or
-`python -m http.server 8000 --directory web`), pick from all six example games, and
+`python -m http.server 8000 --directory web`), pick from all seven example games, and
 run them against a mock LLM provider. See [web/README.md](web/README.md) for what's
 different from the real Python implementation (no real API calls, no concurrency,
 no spatial rendering — that's what the CLI and Unity viewer below are for).
@@ -247,6 +250,7 @@ current status.
 | `games/city.sl` | 5,050 | Large-population + spatial wandering + a concurrent LLM tier (`ask_choice_all`) |
 | `games/outbreak.sl` | 620 | Spread driven by `nearby()`/`eliminate()`, with an LLM tier's policy vote measurably changing the outcome |
 | `games/smallville.sl` | 4 | The full Generative Agents loop: persona, recursive planning, reacting, dialogue, threshold-triggered reflection |
+| `games/smallville_mafia.sl` | 6-8 | Mafia as a ruleset layered on top of the Smallville engine — hidden roles vote using suspicion grounded in a whole day's real dialogue, not a single scripted prompt |
 
 ## Tests
 

@@ -5,6 +5,44 @@ shipped, and why. Newest entry on top.
 
 ---
 
+## 2026-09-13 (follow-up, same day)
+
+**Asked:** correction on the prior entry below — the ask wasn't "add Generative
+Agents primitives as a flat demo," it was "use the language to build an actual
+Smallville simulation, then show composability: Mafia playable on top of the
+Smallville engine, like an API." Also: commit and push consistently going
+forward, not just at the end of a long session.
+
+**Shipped:**
+
+- `games/smallville_mafia.sl` — Mafia as a ruleset layered on `smallville.sl`'s
+  engine instead of its own flat night/day loop. Every agent (mafia included)
+  gets a persona, plans and lives a real day (decompose/move/react/converse/
+  reflect, identical machinery to `smallville.sl`), *then* `Night` (mafia secretly
+  vote a kill at a `Den`, `whisper`ed) and `DayVote` (the town accuses someone)
+  run on top — same shape as `village.sl`'s hidden-role layer, but each day-vote's
+  suspicion is grounded in `generative(10)` memory over a real day of dialogue,
+  not one scripted "what do you want to say" prompt.
+- Verified structurally, not just parsed: ran it 10 seeds under `--mock-only`
+  (all complete in 1-3 rounds, both `town`/`mafia` outcomes occur), inspected the
+  event log for a real run (night kill stayed hidden via `whisper`, day vote
+  eliminated someone, persona/plan/dialogue/reflection events all present
+  alongside the Mafia-specific ones).
+- `tests/test_interpreter.py::test_smallville_mafia_sl_runs_to_completion_with_mock_provider`
+  — checks the Mafia layer actually fired (a `whisper` event, a `"killed in the
+  night"` death) on top of the Smallville layer actually firing (persona set,
+  `plan`/`dialogue` events present). 74 → 75 passing.
+- Mirrored in `web/index.html`'s JS port (7th picker entry) — verified under Node
+  across 4 seeds, same structural results as the Python version.
+- Docs: README.md (games/architecture-section update), DESIGN.md (a full
+  paragraph on what's actually different from `village.sl` and why it's thin),
+  web/README.md (game count 6 → 7).
+- Committed and pushed twice this session (once for the prior entry's work, once
+  for this one) rather than batching everything into one end-of-session commit,
+  per the reminder above.
+
+---
+
 ## 2026-09-13
 
 **Asked:** general check-in on the project, then: "make sure that ur programming

@@ -287,6 +287,23 @@ personas, a spatial `world {}` of homes and shared social spots, a 12-hour "day"
 loop that plans, decomposes, moves, reacts, converses, and threshold-reflects each
 hour. See its header comment for how each mechanism maps onto the game logic.
 
+`games/smallville_mafia.sl` then demonstrates the point of building it this way:
+Mafia as a *different* game layered on top of the same engine, not copy-pasted
+into its own flat loop. Every agent — mafia included — gets a persona, plans a day,
+lives three "hours" of it (decompose/move/react/converse/reflect, identical to
+`smallville.sl`), and only *then* does the hidden-role layer run: a `Night` phase
+(mafia secretly gather at a `Den`, vote a kill, `whisper()`ed so the victim never
+sees it coming — structurally the same shape as `village.sl`'s own `Night`) and a
+`DayVote` phase where the town accuses someone. The thing that's actually
+different from `village.sl`/`mafia.sl` is what each vote is grounded in: there,
+one scripted `ask()` ("what do you want to say to the group?") stands in for a
+day of suspicion; here, `generative(10)` memory retrieval pulls from whatever a
+real day of `converse()` transcripts, `react()` decisions, and `maybe_reflect()`
+insights actually put in the event log. The Mafia-specific code on top of the
+Smallville engine is genuinely thin — one extra phase, one extra vote phase, and
+the same team-count `win_condition` `village.sl` already used — which is the
+composability this architecture was for.
+
 ### Real embeddings and LLM-rated importance
 
 The two paper components originally stood in for by cheap deterministic heuristics
@@ -331,14 +348,17 @@ the thousands (see "World and scale" above); `sociallang/cli.py` (`run`, `schema
 public/private event timeline and agent roster; JSON schema export
 (`sociallang/schema_export.py`) — "export models and model patterns" for external
 tooling, i.e. a game's roles and memory patterns as plain JSON without parsing
-SocialLang. Six working example games (`mafia.sl`, `trust_game.sl`, `city.sl`,
-`village.sl`, `outbreak.sl`, `smallville.sl`). 74 tests covering the lexer, parser,
-interpreter semantics (including a deterministic vote-tally/eliminate test, a
-memory-windowing test, deterministic world generation, spatial builtins, bulk-ask
-concurrency/ordering, and the live WebSocket bridge end to end), the native
-memory-retrieval math, the embedding providers, schema export, and the Generative
-Agents builtins (persona/plan/react/converse/maybe_reflect, `test_generative_agents.py`)
-plus an end-to-end `smallville.sl` run.
+SocialLang. Seven working example games (`mafia.sl`, `trust_game.sl`, `city.sl`,
+`village.sl`, `outbreak.sl`, `smallville.sl`, `smallville_mafia.sl`). 75 tests
+covering the lexer, parser, interpreter semantics (including a deterministic
+vote-tally/eliminate test, a memory-windowing test, deterministic world
+generation, spatial builtins, bulk-ask concurrency/ordering, and the live
+WebSocket bridge end to end), the native memory-retrieval math, the embedding
+providers, schema export, the Generative Agents builtins
+(persona/plan/react/converse/maybe_reflect, `test_generative_agents.py`), an
+end-to-end `smallville.sl` run, and an end-to-end `smallville_mafia.sl` run
+(confirming the Mafia layer's night-kill/day-vote actually fire on top of a real
+day of Smallville-engine agent life).
 
 A live event-streaming bridge (`sociallang/engine/live.py`, `sociallang run --live`)
 lets an external viewer watch a run as it happens instead of only reading the final
@@ -352,7 +372,7 @@ yet — treat "does it actually run" as open until someone does that.
 
 `web/index.html` is a separate, hand-maintained JavaScript port of the lexer/parser/
 interpreter/memory-retrieval logic (not the live bridge or Unity's renderer) — a
-self-contained browser IDE with all six example games embedded (Generative Agents
+self-contained browser IDE with all seven example games embedded (Generative Agents
 builtins included — persona/plan/react/converse/maybe_reflect all have JS
 equivalents), a mock LLM provider standing in for real ones (a public page can't
 hold API keys), and a tutorial panel. It's a full reimplementation, not a thin
