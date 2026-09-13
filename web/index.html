@@ -764,6 +764,14 @@ function retrieveMemory(events, query, nowSeq, k) {
   return top;
 }
 
+// Cheap close condition for converse()'s turn loop -- mirrors _looks_like_farewell
+// in sociallang/lang/interpreter.py.
+const FAREWELL_WORDS = ["bye", "goodbye", "good bye", "see you", "farewell", "gotta go", "have to go", "talk later", "talk to you later", "catch you later"];
+function looksLikeFarewell(line) {
+  const lowered = line.toLowerCase();
+  return FAREWELL_WORDS.some((w) => lowered.includes(w));
+}
+
 class ProviderResponse { constructor(text) { this.text = text; } }
 const OPTIONS_RE = /Respond with exactly one of:\s*(.+)/;
 const FREE_TEXT_POOL = ["I'm not sure yet, let's see how this plays out.", "Something about this doesn't add up to me.", "I'll go along with the group for now.", "Let's hear more before anyone decides anything."];
@@ -803,6 +811,10 @@ class Agent {
   constructor(seat, roleName, team, modelKey, provider) {
     this.seat = seat; this.roleName = roleName; this.team = team; this.modelKey = modelKey; this.provider = provider;
     this.alive = true; this.deathCause = null; this.x = null; this.y = null; this.locationId = null;
+    // Generative Agents (Park et al. 2023) state, beyond the memory stream itself --
+    // mirrors sociallang/lang/interpreter.py's Agent dataclass field-for-field.
+    this.persona = ""; this.plan = []; this.planCursor = 0;
+    this.subplan = []; this.subplanCursor = 0; this.lastReflectSeq = 0;
   }
 }
 class Location {
@@ -1083,7 +1095,7 @@ class Interpreter {
   _evalAttr(node, env) {
     const obj = this.evalExpr(node.obj, env);
     let mapping;
-    if (obj instanceof Agent) mapping = { seat: obj.seat, role: obj.roleName, team: obj.team, alive: obj.alive, model: obj.modelKey, death_cause: obj.deathCause, x: obj.x, y: obj.y, location: obj.locationId ? (this.worldLocations.get(obj.locationId) || null) : null };
+    if (obj instanceof Agent) mapping = { seat: obj.seat, role: obj.roleName, team: obj.team, alive: obj.alive, model: obj.modelKey, death_cause: obj.deathCause, x: obj.x, y: obj.y, location: obj.locationId ? (this.worldLocations.get(obj.locationId) || null) : null, persona: obj.persona, plan: obj.plan, subplan: obj.subplan };
     else if (obj instanceof EventRec) mapping = { text: obj.text, author: obj.author, kind: obj.kind, seq: obj.seq, round: obj.round, importance: obj.importance };
     else if (obj instanceof Location) mapping = { id: obj.id, type: obj.typeName, tag: obj.tag, capacity: obj.capacity, x: obj.x, y: obj.y };
     else throw new SLRuntimeError(`'.${node.name}' is not valid on this kind of value`);
@@ -1173,11 +1185,23 @@ class Interpreter {
 
   _identityFor(agent, role) {
     let identity = `You are ${agent.seat}. Your role is ${role.name} (${role.team} team).`;
+    if (agent.persona) identity += ` ${agent.persona}`;
     if (role.sees === "teammates") {
       const teammates = this.agents.filter((a) => a !== agent && a.roleName === role.name).map((a) => a.seat);
       if (teammates.length > 0) identity += ` Your teammates are: ${teammates.join(", ")}.`;
     }
     return identity;
+  }
+
+  // Shared by the Generative Agents builtins below (make_plan/decompose_step/
+  // react/converse) so their prompt construction can't drift from ask()'s -- same
+  // role as _prompt_pieces in the Python reference.
+  _promptPieces(agent, prompt) {
+    const context = this.buildContextFor(agent, prompt);
+    const role = this.roles.get(agent.roleName);
+    const identity = this._identityFor(agent, role);
+    const userPrompt = `What has happened so far:\n${context}\n\nNow: ${prompt}`;
+    return [identity, userPrompt];
   }
 
   _biAsk(args, kwargs) {
@@ -1266,6 +1290,139 @@ class Interpreter {
     return insights;
   }
 
+  // Threshold-triggered counterpart to reflect() -- fires only once the sum of
+  // importance scores of this agent's memories since its last reflection crosses
+  // `threshold`, matching Park et al. 2023 instead of a script-decided cadence.
+  // Reflection events are written back at importance 0.9 (see _biReflect), so
+  // they count toward the *next* threshold sum and get retrieved again by the
+  // same scoring -- reflecting on reflections, without a separate tree structure.
+  _biMaybeReflect(args, kwargs) {
+    const agent = args[0];
+    const threshold = kwargs.threshold !== undefined ? kwargs.threshold : (args.length > 1 ? args[1] : 4.0);
+    const visible = this._visibleEventsFor(agent);
+    const newEvents = visible.filter((e) => e.seq > agent.lastReflectSeq);
+    const total = newEvents.reduce((s, e) => s + e.importance, 0);
+    if (total < threshold) return [];
+    const insights = this._biReflect([agent]);
+    agent.lastReflectSeq = this.seq;
+    return insights;
+  }
+
+  _biSetPersona(args) { const [agent, text] = args; agent.persona = this._stringify(text); }
+
+  // Top level of the paper's recursive plan decomposition: a rough, broad-strokes
+  // schedule generated from the agent's persona and memory context, stored on the
+  // agent and also written into its own memory stream. decompose_step() below
+  // does the next level down, on demand rather than all at once.
+  _biMakePlan(args, kwargs) {
+    const agent = args[0];
+    const goal = args.length > 1 ? args[1] : (kwargs.goal !== undefined ? kwargs.goal : "Plan what you'll do.");
+    const steps = kwargs.steps !== undefined ? Math.trunc(kwargs.steps) : 6;
+    const prompt = `${goal}\n\nSketch a rough plan of about ${steps} broad-strokes steps for what you'll do, in order. Respond with exactly one step per line, formatted as 'time: activity' (e.g. '9am: eat breakfast at home'). No numbering, no extra commentary.`;
+    const [identity, userPrompt] = this._promptPieces(agent, prompt);
+    const resp = agent.provider.complete(identity, userPrompt, 0.7, 300);
+    const plan = [];
+    for (let line of (resp.text || "").split("\n")) {
+      line = line.replace(/^[-* ]+|[-* ]+$/g, "").trim();
+      if (!line) continue;
+      const idx = line.indexOf(":");
+      const step = new Map();
+      if (idx !== -1) { step.set("time", line.slice(0, idx).trim()); step.set("activity", line.slice(idx + 1).trim()); }
+      else { step.set("time", ""); step.set("activity", line); }
+      plan.push(step);
+    }
+    if (plan.length === 0) plan.push(new Map([["time", ""], ["activity", goal]]));
+    agent.plan = steps > 0 ? plan.slice(0, steps) : plan;
+    agent.planCursor = 0;
+    agent.subplan = []; agent.subplanCursor = 0;
+    const summary = agent.plan.map((s) => (s.get("time") ? `${s.get("time")}: ${s.get("activity")}` : s.get("activity"))).join("; ");
+    this._appendEvent("plan", `Plan: ${summary}`, agent.seat, new Set([agent.seat]), 0.5);
+    return agent.plan;
+  }
+
+  _biCurrentStep(args) {
+    const agent = args[0];
+    if (agent.plan.length === 0 || agent.planCursor >= agent.plan.length) return null;
+    return agent.plan[agent.planCursor];
+  }
+
+  // Second level of recursive decomposition: turns one broad-strokes plan step
+  // into a handful of concrete, few-minutes-each actions. Defaults to the agent's
+  // own current_step() if none is given.
+  _biDecomposeStep(args, kwargs) {
+    const agent = args[0];
+    const step = args.length > 1 ? args[1] : this._biCurrentStep([agent]);
+    const chunks = kwargs.chunks !== undefined ? Math.trunc(kwargs.chunks) : 4;
+    if (step === null || step === undefined) return [];
+    const activity = step instanceof Map ? step.get("activity") : this._stringify(step);
+    const prompt = `Your current broad-strokes plan step is: '${activity}'. Break it down into about ${chunks} smaller, concrete, sequential actions (a few minutes each). Respond with exactly one action per line, no numbering.`;
+    const [identity, userPrompt] = this._promptPieces(agent, prompt);
+    const resp = agent.provider.complete(identity, userPrompt, 0.7, 250);
+    let actions = (resp.text || "").split("\n").map((l) => l.replace(/^[-* ]+|[-* ]+$/g, "").trim()).filter((l) => l.length > 0);
+    if (actions.length === 0) actions = [activity];
+    agent.subplan = chunks > 0 ? actions.slice(0, chunks) : actions;
+    agent.subplanCursor = 0;
+    return agent.subplan;
+  }
+
+  _biCurrentAction(args) {
+    const agent = args[0];
+    if (agent.subplan.length > 0 && agent.subplanCursor < agent.subplan.length) return agent.subplan[agent.subplanCursor];
+    const step = this._biCurrentStep([agent]);
+    return step ? step.get("activity") : null;
+  }
+
+  // Moves to the next fine-grained action if decompose_step() populated one,
+  // otherwise to the next broad-strokes step.
+  _biAdvancePlan(args) {
+    const agent = args[0];
+    if (agent.subplan.length > 0 && agent.subplanCursor < agent.subplan.length - 1) { agent.subplanCursor += 1; return; }
+    agent.subplan = []; agent.subplanCursor = 0;
+    if (agent.plan.length > 0 && agent.planCursor < agent.plan.length - 1) agent.planCursor += 1;
+  }
+
+  // The paper's reacting mechanism: decide whether to keep following the current
+  // plan or interrupt it given something just observed. Returns null for
+  // "continue as planned", or a one-sentence new immediate action otherwise.
+  _biReact(args, kwargs) {
+    const agent = args[0];
+    const observation = args[1];
+    const current = this._biCurrentAction([agent]) || "nothing in particular";
+    const prompt = `You observe: ${observation}\nYour current planned action is: ${current}\n\nDecide: continue with your current planned action, or react to what you just observed? If you continue, respond with exactly: CONTINUE\nIf you react, respond with one sentence describing your new immediate action instead.`;
+    const [identity, userPrompt] = this._promptPieces(agent, prompt);
+    const resp = agent.provider.complete(identity, userPrompt, 0.8, 80);
+    const text = (resp.text || "").trim();
+    this._appendEvent("ask", `(observed: ${observation}) ${text}`, agent.seat, new Set([agent.seat]));
+    if (text.replace(/\.+$/, "").toUpperCase() === "CONTINUE") return null;
+    return text;
+  }
+
+  // The paper's dialogue-generation mechanism: two agents that have met exchange
+  // turns (each a real ask() against that agent's own model/persona/memory),
+  // alternating until one says something that reads like a goodbye or max_turns
+  // exchanges pass. Every line is a `dialogue` event visible to both.
+  _biConverse(args, kwargs) {
+    const a = args[0], b = args[1];
+    const topic = args.length > 2 ? args[2] : (kwargs.topic !== undefined ? kwargs.topic : "");
+    const maxTurns = kwargs.max_turns !== undefined ? Math.trunc(kwargs.max_turns) : 4;
+    const seats = new Set([a.seat, b.seat]);
+    const transcript = [];
+    let speaker = a, other = b;
+    let prompt = `You run into ${other.seat}.` + (topic ? ` Topic on your mind: ${topic}.` : "") + " Say one thing to them, one sentence.";
+    for (let i = 0; i < Math.max(maxTurns, 0) * 2; i += 1) {
+      const [identity, userPrompt] = this._promptPieces(speaker, prompt);
+      const resp = speaker.provider.complete(identity, userPrompt, 0.9, 100);
+      const line = (resp.text || "").trim();
+      if (!line) break;
+      this._appendEvent("dialogue", `${speaker.seat}: ${line}`, speaker.seat, new Set(seats));
+      transcript.push(`${speaker.seat}: ${line}`);
+      if (looksLikeFarewell(line)) break;
+      [speaker, other] = [other, speaker];
+      prompt = `${other.seat} just said to you: "${line}" Respond with one sentence.`;
+    }
+    return transcript;
+  }
+
   _biEliminate(args, kwargs) {
     const agent = args[0];
     const cause = args.length > 1 ? args[1] : kwargs.cause;
@@ -1326,6 +1483,15 @@ class Interpreter {
       whisper: (a) => this._biWhisper(a),
       remember: (a) => this._biRemember(a),
       reflect: (a) => this._biReflect(a),
+      maybe_reflect: (a, k) => this._biMaybeReflect(a, k),
+      set_persona: (a) => this._biSetPersona(a),
+      make_plan: (a, k) => this._biMakePlan(a, k),
+      current_step: (a) => this._biCurrentStep(a),
+      decompose_step: (a, k) => this._biDecomposeStep(a, k),
+      current_action: (a) => this._biCurrentAction(a),
+      advance_plan: (a) => this._biAdvancePlan(a),
+      react: (a, k) => this._biReact(a, k),
+      converse: (a, k) => this._biConverse(a, k),
       alive: () => this.agents.filter((ag) => ag.alive),
       all_agents: () => this.agents.slice(),
       with_role: (a) => this.agents.filter((ag) => ag.roleName === a[0]),
@@ -1395,6 +1561,7 @@ const EXAMPLE_SOURCE = {
   "village.sl": "Ly8gQSBzcGF0aWFsIGhpZGRlbi1yb2xlIHNvY2lhbC1kZWR1Y3Rpb24gZ2FtZSAtLSBNYWZpYSdzIHNoYXBlICh3b2x2ZXMgdnMuIHRvd24sCi8vIG5pZ2h0IGtpbGxzLCBkYXkgdm90ZXMpIHBsdXMgYSB3b3JsZCB7fSBzbyBsb2NhdGlvbiBhY3R1YWxseSBkcml2ZXMgdmlzaWJpbGl0eToKLy8gd29sdmVzIHBsYW4gaW4gYSBwcml2YXRlIERlbiAodGhlaXIgbmlnaHQgY2hhdHRlciBpcyB3aGlzcGVyZWQgb25seSB0byB3aG9ldmVyIGlzCi8vIHBoeXNpY2FsbHkgdGhlcmUpLCBhbmQgdGhlIHdob2xlIHZpbGxhZ2UgZ2F0aGVycyBhdCB0aGUgUGxhemEgdG8gdm90ZSBieSBkYXkuCnNpbSBWaWxsYWdlIHsKICBhZ2VudHM6IDYuLjEwCgogIG1lbW9yeSByZWNlbnQobikgewogICAgcmV0dXJuIGxhc3QoZXZlbnRzLCBuKQogIH0KCiAgcm9sZSBXb2xmIHsKICAgIHRlYW06ICJ3b2xmIgogICAgbWVtb3J5OiByZWNlbnQoMjApCiAgICBzZWVzOiB0ZWFtbWF0ZXMKICAgIGNvdW50OiAyCiAgfQoKICByb2xlIFNlZXIgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDEKICB9CgogIHJvbGUgVmlsbGFnZXIgewogICAgdGVhbTogInRvd24iCiAgICBtZW1vcnk6IGZ1bGxfaGlzdG9yeQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IHJlbWFpbmRlcgogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDQwCiAgICBoZWlnaHQ6IDQwCiAgICBsb2NhdGlvbiBQbGF6YSB7IHRhZzogInB1YmxpYyIsIGNvdW50OiAxIH0KICAgIGxvY2F0aW9uIERlbiAgIHsgdGFnOiAid29sZiIsIGNvdW50OiAxIH0KICAgIGxvY2F0aW9uIEhvdXNlIHsgdGFnOiAicHJpdmF0ZSIsIGNvdW50OiAxMCB9CiAgfQoKICBwaGFzZSBTZXR0bGUgewogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiVmlsbGFnZXIiKSwgInByaXZhdGUiKQogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiU2VlciIpLCAicHJpdmF0ZSIpCiAgICBzcGF3bl9hZ2VudHNfYXQod2l0aF9yb2xlKCJXb2xmIiksICJwcml2YXRlIikKICB9CgogIHBoYXNlIE5pZ2h0IHsKICAgIGxldCBkZW4gPSBsb2NhdGlvbnNfYnlfdGFnKCJ3b2xmIilbMF0KICAgIGZvciB3IGluIHdpdGhfcm9sZSgiV29sZiIpIHsKICAgICAgaWYgdy5hbGl2ZSB7IG1vdmVfdG8odywgZGVuKSB9CiAgICB9CgogICAgbGV0IHRhcmdldHMgPSBhbGl2ZSgpCiAgICBsZXQgdm90ZXMgPSB7fQogICAgZm9yIHcgaW4gd2l0aF9yb2xlKCJXb2xmIikgewogICAgICBpZiB3LmFsaXZlIHsKICAgICAgICBsZXQgcGljayA9IGFza19jaG9pY2UodywgIldobyBzaG91bGQgdGhlIHdvbHZlcyBlbGltaW5hdGUgdG9uaWdodD8iLCB0YXJnZXRzKQogICAgICAgIHZvdGVzW3ddID0gcGljawogICAgICAgIHdoaXNwZXIoYWdlbnRzX2F0KGRlbiksIHcuc2VhdCArICIgd2FudHMgdG8ga2lsbCAiICsgcGljay5zZWF0ICsgIi4iKQogICAgICB9CiAgICB9CiAgICBsZXQgdmljdGltID0gdGFsbHkodm90ZXMpCgogICAgZm9yIHMgaW4gd2l0aF9yb2xlKCJTZWVyIikgewogICAgICBpZiBzLmFsaXZlIHsKICAgICAgICBsZXQgY2hlY2tlZCA9IGFza19jaG9pY2UocywgIldobyBkbyB5b3Ugd2FudCB0byBpbnZlc3RpZ2F0ZSB0b25pZ2h0PyIsIGFsaXZlKCkpCiAgICAgICAgcmVtZW1iZXIocywgY2hlY2tlZC5zZWF0ICsgIiBpcyBvbiB0aGUgIiArIGNoZWNrZWQudGVhbSArICIgdGVhbS4iKQogICAgICB9CiAgICB9CgogICAgaWYgdmljdGltICE9IG51bGwgewogICAgICBlbGltaW5hdGUodmljdGltLCAia2lsbGVkIGJ5IHRoZSB3b2x2ZXMiKQogICAgfQogIH0KCiAgcGhhc2UgRGF5IHsKICAgIGxldCBwbGF6YSA9IGxvY2F0aW9uc19ieV90YWcoInB1YmxpYyIpWzBdCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgbW92ZV90byhhLCBwbGF6YSkKICAgIH0KCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgYnJvYWRjYXN0KGEsIGFzayhhLCAiSXQncyBkYXl0aW1lIGF0IHRoZSBwbGF6YS4gV2hhdCBkbyB5b3Ugd2FudCB0byBzYXkgdG8gdGhlIGdyb3VwPyIpKQogICAgfQoKICAgIGxldCB2b3RlcyA9IHt9CiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgdm90ZXNbYV0gPSBhc2tfY2hvaWNlKGEsICJXaG8gZG8geW91IHdhbnQgdG8gdm90ZSB0byBlbGltaW5hdGU/IiwgYWxpdmUoKSkKICAgIH0KICAgIGxldCBhY2N1c2VkID0gdGFsbHkodm90ZXMpCiAgICBpZiBhY2N1c2VkICE9IG51bGwgewogICAgICBlbGltaW5hdGUoYWNjdXNlZCwgInZvdGVkIG91dCBieSB0aGUgdmlsbGFnZSIpCiAgICB9CiAgfQoKICB3aW5fY29uZGl0aW9uIHsKICAgIGxldCB3b2x2ZXNfbGVmdCA9IDAKICAgIGxldCB0b3duX2xlZnQgPSAwCiAgICBmb3IgYSBpbiBhbGl2ZSgpIHsKICAgICAgaWYgYS50ZWFtID09ICJ3b2xmIiB7CiAgICAgICAgd29sdmVzX2xlZnQgPSB3b2x2ZXNfbGVmdCArIDEKICAgICAgfSBlbHNlIHsKICAgICAgICB0b3duX2xlZnQgPSB0b3duX2xlZnQgKyAxCiAgICAgIH0KICAgIH0KICAgIGlmIHdvbHZlc19sZWZ0ID09IDAgewogICAgICByZXR1cm4gInRvd24iCiAgICB9CiAgICBpZiB3b2x2ZXNfbGVmdCA+PSB0b3duX2xlZnQgewogICAgICByZXR1cm4gIndvbGYiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIGlmIHJvdW5kID09IDEgewogICAgICBydW4gU2V0dGxlCiAgICB9CiAgICBydW4gTmlnaHQKICAgIGxldCB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgICBydW4gRGF5CiAgICB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgfQp9Cg==",
   "city.sl": "Ly8gQSBzcGF0aWFsLCBsYXJnZS1wb3B1bGF0aW9uIGRlbW8uIFN0cnVjdHVyYWxseSB2ZXJ5IGRpZmZlcmVudCBmcm9tIG1hZmlhLnNsLwovLyB0cnVzdF9nYW1lLnNsOiBubyBoaWRkZW4gcm9sZXMsIG5vIGVsaW1pbmF0aW9uLCBubyB3aW4gY29uZGl0aW9uIGJleW9uZCBhIHJvdW5kCi8vIGNhcC4gVGhlIHBvaW50IG9mIHRoaXMgZ2FtZSBpcyB0byBleGVyY2lzZSB0aGUgdHdvIHRoaW5ncyBNYWZpYS9UcnVzdEdhbWUgbmV2ZXIKLy8gbmVlZGVkIC0tIGEgcHJvY2VkdXJhbGx5IGdlbmVyYXRlZCBgd29ybGQge31gIGFuZCBhIHBvcHVsYXRpb24gYmlnIGVub3VnaCB0aGF0Ci8vIGV2ZXJ5IGFnZW50IGNhbGxpbmcgYXNrKCkgaW5kaXZpZHVhbGx5LCBldmVyeSByb3VuZCwgd291bGQgYmUgZmFyIHRvbyBzbG93LgovLwovLyBUd28gdGllcnMsIGV4cHJlc3NlZCB3aXRoIG5vdGhpbmcgbW9yZSB0aGFuIHRoZSBsYW5ndWFnZSBhbHJlYWR5IGhhZCAoYW4gYGlmYCBvbgovLyByb2xlIGFuZCBhIHBsYWluIGBmbmAgLS0gbm8gbmV3ICJiZWhhdmlvciB0aWVyIiBzeW50YXggd2FzIG5lZWRlZCk6Ci8vICAgLSA1MDAwIENpdGl6ZW5zIGp1c3Qgd2FuZGVyIGJldHdlZW4gbG9jYXRpb25zIGVhY2ggcm91bmQ6IHB1cmUgU29jaWFsTGFuZyBjb2RlLAovLyAgICAgbm8gTExNIGNhbGwsIHNvIHRoZWlyIGNvc3QgZG9lc24ndCBkZXBlbmQgb24gbW9kZWwgbGF0ZW5jeSBhdCBhbGwuCi8vICAgLSA1MCBKb3VybmFsaXN0cyBhcmUgdGhlIExMTSB0aWVyOiBlYWNoIHJvdW5kIHRoZXkgYWxsIGdldCBhc2tlZCBmb3IgYSBoZWFkbGluZQovLyAgICAgdmlhIGFza19jaG9pY2VfYWxsKCksIHdoaWNoIGZpcmVzIGV2ZXJ5IG9uZSBvZiB0aG9zZSBjYWxscyBjb25jdXJyZW50bHkKLy8gICAgIGluc3RlYWQgb2Ygc2VyaWFsaXppbmcgNTAgc2VxdWVudGlhbCByb3VuZCB0cmlwcy4Kc2ltIENpdHkgewogIGFnZW50czogNTA1MAoKICByb2xlIENpdGl6ZW4gewogICAgdGVhbTogImNpdGl6ZW4iCiAgICBtZW1vcnk6IHJlY2VudCgzKQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDUwMDAKICB9CgogIHJvbGUgSm91cm5hbGlzdCB7CiAgICB0ZWFtOiAicHJlc3MiCiAgICBtZW1vcnk6IHJlY2VudCgxMCkKICAgIHNlZXM6IG5vbmUKICAgIGNvdW50OiA1MAogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDIwMAogICAgaGVpZ2h0OiAyMDAKICAgIGxvY2F0aW9uIEhvbWUgICB7IHRhZzogInByaXZhdGUiLCBjb3VudDogNDAwIH0KICAgIGxvY2F0aW9uIE1hcmtldCB7IHRhZzogInB1YmxpYyIsIGNhcGFjaXR5OiAyMDAsIGNvdW50OiAyMCB9CiAgICBsb2NhdGlvbiBQbGF6YSAgeyB0YWc6ICJwdWJsaWMiLCBjYXBhY2l0eTogNTAwLCBjb3VudDogNSB9CiAgfQoKICBmbiB3YW5kZXIoYWdlbnQsIGNob2ljZXMpIHsKICAgIGxldCBkZXN0ID0gcmFuZG9tX2Nob2ljZShjaG9pY2VzKQogICAgbW92ZV90byhhZ2VudCwgZGVzdCkKICB9CgogIHBoYXNlIE1vcm5pbmcgewogICAgaWYgcm91bmQgPT0gMSB7CiAgICAgIHNwYXduX2FnZW50c19hdCh3aXRoX3JvbGUoIkNpdGl6ZW4iKSkKICAgICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiSm91cm5hbGlzdCIpLCAicHVibGljIikKICAgIH0KCiAgICBsZXQgY2hvaWNlcyA9IGxvY2F0aW9ucygpCiAgICBmb3IgYyBpbiB3aXRoX3JvbGUoIkNpdGl6ZW4iKSB7CiAgICAgIHdhbmRlcihjLCBjaG9pY2VzKQogICAgfQoKICAgIGxldCByZXBvcnRlcnMgPSB3aXRoX3JvbGUoIkpvdXJuYWxpc3QiKQogICAgbGV0IGhlYWRsaW5lcyA9IGFza19jaG9pY2VfYWxsKAogICAgICByZXBvcnRlcnMsCiAgICAgICJXaGF0J3MgdG9kYXkncyBiaWdnZXN0IGhlYWRsaW5lIGluIHRoZSBjaXR5PyIsCiAgICAgIFsiTWFya2V0IHByaWNlcyByaXNlIiwgIlBsYXphIGdhdGhlcmluZyBncm93cyIsICJRdWlldCBkYXkgaW4gdGhlIGNpdHkiXQogICAgKQogICAgZm9yIHIgaW4gcmVwb3J0ZXJzIHsKICAgICAgYnJvYWRjYXN0KHIsIGhlYWRsaW5lc1tyXSkKICAgIH0KICB9CgogIHdpbl9jb25kaXRpb24gewogICAgaWYgcm91bmQgPj0gMyB7IHJldHVybiAiZG9uZSIgfQogIH0KCiAgbG9vcCB7CiAgICBydW4gTW9ybmluZwogICAgbGV0IHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7IHJldHVybiB3aW5uZXIgfQogIH0KfQo=",
   "outbreak.sl": "Ly8gQSBsYXJnZS1zY2FsZSBzcGF0aWFsIGRlbW86IDYyMCBhZ2VudHMsIGR5bmFtaWNzIGRyaXZlbiBlbnRpcmVseSBieSBuZWFyYnkoKSwKLy8gZWxpbWluYXRlKCksIGFuZCBhIHNtYWxsIExMTSB0aWVyIG1ha2luZyBhIHBvbGljeSBjYWxsIGVhY2ggcm91bmQuCi8vCi8vICJJbmZlY3RlZCIgaXMgbW9kZWxlZCBieSByZXVzaW5nIGFsaXZlKCkvZWxpbWluYXRlKCkgKGxpa2UgbWFmaWEuc2wgcmV1c2VzIHRoZW0gZm9yCi8vICJlbGltaW5hdGVkIikgcmF0aGVyIHRoYW4gYSBuZXcgcGVyLWFnZW50IGZpZWxkOiB0aGUgbGFuZ3VhZ2UgZG9lc24ndCB5ZXQgaGF2ZSBhIHdheQovLyB0byBhdHRhY2ggYSBjdXN0b20gZmllbGQgdG8gYW4gYWdlbnQgdGhhdCBzdXJ2aXZlcyBhY3Jvc3Mgcm91bmRzIC0tIGBsb29wIHsgfWAgZ2V0cwovLyBhIGZyZXNoIGNoaWxkIHNjb3BlIGV2ZXJ5IGl0ZXJhdGlvbiwgc28gb25seSBBZ2VudCdzIG93biBidWlsdC1pbiBmaWVsZHMgKGFsaXZlLAovLyBkZWF0aF9jYXVzZSwgeCwgeSwgbG9jYXRpb25faWQpIHBlcnNpc3QuIFRoYXQncyBlbm91Z2ggaGVyZTogYW4gaW5mZWN0ZWQvcmVtb3ZlZAovLyByZXNpZGVudCBpcyBqdXN0IGVsaW1pbmF0ZSgpJ2QsIGFuZCBhbGl2ZSgpL3dpdGhfcm9sZSgpIGxldCBldmVyeSBsYXRlciByb3VuZCBzZWUKLy8gd2hvJ3Mgc3RpbGwgaGVhbHRoeS4Kc2ltIE91dGJyZWFrIHsKICBhZ2VudHM6IDYyMAoKICByb2xlIFJlc2lkZW50IHsKICAgIHRlYW06ICJyZXNpZGVudCIKICAgIG1lbW9yeTogcmVjZW50KDMpCiAgICBzZWVzOiBub25lCiAgICBjb3VudDogNTAwCiAgfQoKICByb2xlIFBhdGllbnRaZXJvIHsKICAgIHRlYW06ICJyZXNpZGVudCIKICAgIG1lbW9yeTogcmVjZW50KDMpCiAgICBzZWVzOiBub25lCiAgICBjb3VudDogMjAKICB9CgogIHJvbGUgT2ZmaWNpYWwgewogICAgdGVhbTogImF1dGhvcml0eSIKICAgIG1lbW9yeTogcmVjZW50KDEwKQogICAgc2Vlczogbm9uZQogICAgY291bnQ6IDEwMAogIH0KCiAgd29ybGQgewogICAgd2lkdGg6IDE1MAogICAgaGVpZ2h0OiAxNTAKICAgIGxvY2F0aW9uIEJsb2NrICAgIHsgdGFnOiAicmVzaWRlbnRpYWwiLCBjb3VudDogMjYwIH0KICAgIGxvY2F0aW9uIENpdHlIYWxsIHsgdGFnOiAiYXV0aG9yaXR5IiwgY291bnQ6IDEgfQogIH0KCiAgZm4gd2FuZGVyKGFnZW50LCBjaG9pY2VzKSB7CiAgICBsZXQgZGVzdCA9IHJhbmRvbV9jaG9pY2UoY2hvaWNlcykKICAgIG1vdmVfdG8oYWdlbnQsIGRlc3QpCiAgfQoKICBwaGFzZSBTZXR1cCB7CiAgICBzcGF3bl9hZ2VudHNfYXQod2l0aF9yb2xlKCJSZXNpZGVudCIpLCAicmVzaWRlbnRpYWwiKQogICAgc3Bhd25fYWdlbnRzX2F0KHdpdGhfcm9sZSgiUGF0aWVudFplcm8iKSwgInJlc2lkZW50aWFsIikKICAgIHNwYXduX2FnZW50c19hdCh3aXRoX3JvbGUoIk9mZmljaWFsIiksICJhdXRob3JpdHkiKQogICAgZm9yIHAgaW4gd2l0aF9yb2xlKCJQYXRpZW50WmVybyIpIHsKICAgICAgZWxpbWluYXRlKHAsICJpbmRleCBjYXNlIikKICAgIH0KICB9CgogIHBoYXNlIFNwcmVhZCB7CiAgICBsZXQgb2ZmaWNpYWxzID0gd2l0aF9yb2xlKCJPZmZpY2lhbCIpCiAgICBsZXQgcG9saWN5ID0gYXNrX2Nob2ljZV9hbGwob2ZmaWNpYWxzLCAiU2hvdWxkIHRoZSBjaXR5IGVuYWN0IGEgbG9ja2Rvd24gdGhpcyByb3VuZD8iLCBbIkxvY2tkb3duIiwgIlN0YXkgb3BlbiJdKQogICAgbGV0IGxvY2tkb3duX3ZvdGVzID0gMAogICAgZm9yIG8gaW4gb2ZmaWNpYWxzIHsKICAgICAgaWYgcG9saWN5W29dID09ICJMb2NrZG93biIgewogICAgICAgIGxvY2tkb3duX3ZvdGVzID0gbG9ja2Rvd25fdm90ZXMgKyAxCiAgICAgIH0KICAgIH0KCiAgICBsZXQgcmFkaXVzID0gNgogICAgaWYgbG9ja2Rvd25fdm90ZXMgKiAyID49IGNvdW50KG9mZmljaWFscykgewogICAgICByYWRpdXMgPSAyCiAgICAgIGJyb2FkY2FzdCgiQ2l0eSBIYWxsIGVuYWN0cyBhIGxvY2tkb3duLiIpCiAgICB9IGVsc2UgewogICAgICBicm9hZGNhc3QoIkNpdHkgSGFsbCBrZWVwcyB0aGUgY2l0eSBvcGVuLiIpCiAgICB9CgogICAgbGV0IGNob2ljZXMgPSBsb2NhdGlvbnNfYnlfdGFnKCJyZXNpZGVudGlhbCIpCiAgICBmb3IgciBpbiB3aXRoX3JvbGUoIlJlc2lkZW50IikgewogICAgICBpZiByLmFsaXZlIHsKICAgICAgICB3YW5kZXIociwgY2hvaWNlcykKICAgICAgfQogICAgfQoKICAgIC8vIE9ubHkgYWdlbnRzIGluZmVjdGVkIGJlZm9yZSB0aGlzIHJvdW5kJ3Mgc3ByZWFkIGJlZ2FuIGFjdCBhcyBzcHJlYWRlcnMgLS0KICAgIC8vIGVsaW1pbmF0ZSgpIG11dGF0ZXMgdGhlIHNhbWUgbGl2ZSBBZ2VudCBvYmplY3RzIGFsbF9hZ2VudHMoKSBpdGVyYXRlcyBvdmVyLAogICAgLy8gc28gd2l0aG91dCB0aGUgIm5vdCBpbmZlY3RlZCB0aGlzIHJvdW5kIiBndWFyZCwgYW4gYWdlbnQgaW5mZWN0ZWQgZWFybGllcgogICAgLy8gaW4gdGhpcyB2ZXJ5IGxvb3AgY291bGQgaW1tZWRpYXRlbHkgc3ByZWFkIGZ1cnRoZXIgd2l0aGluIHRoZSBzYW1lIHJvdW5kCiAgICAvLyAob3JkZXItZGVwZW5kZW50IG9uIC0tc2VlZCksIGluc3RlYWQgb2YgdGhlIGludGVuZGVkIG9uZS1ob3AtcGVyLXJvdW5kCiAgICAvLyBtb2RlbC4gZGVhdGhfY2F1c2UgZG91YmxlcyBhcyB0aGF0IGd1YXJkOiBpdCdzIHN0YW1wZWQgd2l0aCB0aGUgcm91bmQgYW4KICAgIC8vIGluZmVjdGlvbiBoYXBwZW5lZCwgYW5kICJpbmRleCBjYXNlIiAoU2V0dXAncyBzZWVkIGluZmVjdGlvbnMpIGFsd2F5cwogICAgLy8gY291bnRzIGFzIHByaW9yLgogICAgbGV0IHRoaXNfcm91bmRfdGFnID0gImluZmVjdGVkQCIgKyBzdHIocm91bmQpCiAgICBmb3IgYSBpbiBhbGxfYWdlbnRzKCkgewogICAgICBpZiBhLnJvbGUgIT0gIk9mZmljaWFsIiBhbmQgbm90IGEuYWxpdmUgYW5kIGEuZGVhdGhfY2F1c2UgIT0gdGhpc19yb3VuZF90YWcgewogICAgICAgIGxldCBjbG9zZSA9IG5lYXJieShhLCByYWRpdXMpCiAgICAgICAgZm9yIGMgaW4gY2xvc2UgewogICAgICAgICAgaWYgYy5hbGl2ZSBhbmQgYy5yb2xlICE9ICJPZmZpY2lhbCIgewogICAgICAgICAgICBpZiByYW5kb21fY2hvaWNlKFt0cnVlLCBmYWxzZSwgZmFsc2UsIGZhbHNlLCBmYWxzZSwgZmFsc2VdKSB7CiAgICAgICAgICAgICAgZWxpbWluYXRlKGMsIHRoaXNfcm91bmRfdGFnKQogICAgICAgICAgICB9CiAgICAgICAgICB9CiAgICAgICAgfQogICAgICB9CiAgICB9CiAgfQoKICB3aW5fY29uZGl0aW9uIHsKICAgIGxldCBpbmZlY3RlZCA9IDAKICAgIGxldCByZXNpZGVudHMgPSAwCiAgICBmb3IgYSBpbiBhbGxfYWdlbnRzKCkgewogICAgICBpZiBhLnJvbGUgIT0gIk9mZmljaWFsIiB7CiAgICAgICAgcmVzaWRlbnRzID0gcmVzaWRlbnRzICsgMQogICAgICAgIGlmIG5vdCBhLmFsaXZlIHsKICAgICAgICAgIGluZmVjdGVkID0gaW5mZWN0ZWQgKyAxCiAgICAgICAgfQogICAgICB9CiAgICB9CiAgICBpZiByb3VuZCA+PSA2IHsKICAgICAgaWYgaW5mZWN0ZWQgKiAzID49IHJlc2lkZW50cyB7CiAgICAgICAgcmV0dXJuICJvdXRicmVhayIKICAgICAgfQogICAgICByZXR1cm4gImNvbnRhaW5lZCIKICAgIH0KICB9CgogIGxvb3AgewogICAgaWYgcm91bmQgPT0gMSB7CiAgICAgIHJ1biBTZXR1cAogICAgfQogICAgcnVuIFNwcmVhZAogICAgbGV0IHdpbm5lciA9IGNoZWNrX3dpbigpCiAgICBpZiB3aW5uZXIgIT0gbnVsbCB7CiAgICAgIHJldHVybiB3aW5uZXIKICAgIH0KICB9Cn0K",
+  "smallville.sl": "Ly8gQSBmdWxsIHBhc3MgdGhyb3VnaCB0aGUgR2VuZXJhdGl2ZSBBZ2VudHMgYXJjaGl0ZWN0dXJlIChQYXJrIGV0IGFsLiAyMDIzLAovLyAiR2VuZXJhdGl2ZSBBZ2VudHM6IEludGVyYWN0aXZlIFNpbXVsYWNyYSBvZiBIdW1hbiBCZWhhdmlvciIgLS0gdGhlICJTbWFsbHZpbGxlIgovLyBwYXBlciksIG5vdCBqdXN0IGl0cyBtZW1vcnktc3RyZWFtIGhhbGY6Ci8vCi8vICAgLSBwZXJzb25hICAgICAgICAgICAgLS0gc2V0X3BlcnNvbmEoKSBmb2xkcyBhIGJhY2tzdG9yeSBpbnRvIGV2ZXJ5IHByb21wdAovLyAgIC0gcGxhbm5pbmcgICAgICAgICAgICAtLSBtYWtlX3BsYW4oKSBza2V0Y2hlcyB0aGUgZGF5IGluIGJyb2FkIHN0cm9rZXMsCi8vICAgICAgICAgICAgICAgICAgICAgICAgICAgIGRlY29tcG9zZV9zdGVwKCkgcmVjdXJzaXZlbHkgYnJlYWtzIHRoZSBjdXJyZW50IHN0ZXAKLy8gICAgICAgICAgICAgICAgICAgICAgICAgICAgaW50byBhIGZldyBjb25jcmV0ZSBhY3Rpb25zLCBvbiBkZW1hbmQKLy8gICAtIHJlYWN0aW5nICAgICAgICAgICAgLS0gcmVhY3QoKSBkZWNpZGVzIHdoZXRoZXIgYW4gb2JzZXJ2YXRpb24gKGEgbmVpZ2hib3IKLy8gICAgICAgICAgICAgICAgICAgICAgICAgICAgc2hvd2luZyB1cCkgaW50ZXJydXB0cyB0aGUgcGxhbiBvciBnZXRzIGlnbm9yZWQKLy8gICAtIGRpYWxvZ3VlIGdlbmVyYXRpb24gLS0gY29udmVyc2UoKSBydW5zIGEgcmVhbCBtdWx0aS10dXJuIGV4Y2hhbmdlIGJldHdlZW4gdHdvCi8vICAgICAgICAgICAgICAgICAgICAgICAgICAgIGFnZW50cycgb3duIG1vZGVscyB3aGVuIGEgcmVhY3Rpb24gbGVhZHMgdG8gYSBtZWV0aW5nCi8vICAgLSByZWZsZWN0aW9uICAgICAgICAgIC0tIG1heWJlX3JlZmxlY3QoKSB0cmlnZ2VycyBvbmNlIGFjY3VtdWxhdGVkIGltcG9ydGFuY2UKLy8gICAgICAgICAgICAgICAgICAgICAgICAgICAgY3Jvc3NlcyBhIHRocmVzaG9sZCwgc2FtZSBhcyB0aGUgcGFwZXIsIHJhdGhlciB0aGFuIG9uCi8vICAgICAgICAgICAgICAgICAgICAgICAgICAgIGEgZml4ZWQgY2FkZW5jZQovLwovLyBmb3VyIHZpbGxhZ2VycywgYSBzcGF0aWFsIHdvcmxkIChob21lcyArIHRocmVlIHNoYXJlZC9zb2NpYWwgc3BvdHMpLCBvbmUgMTItaG91cgovLyBkYXkuIFNlZSBERVNJR04ubWQncyAiR2VuZXJhdGl2ZSBBZ2VudHMgYXJjaGl0ZWN0dXJlIiBzZWN0aW9uIGZvciBob3cgZWFjaCBvZgovLyB0aGVzZSBtYXBzIG9udG8gdGhlIHBhcGVyJ3MgbWVjaGFuaXNtcyBhbmQgd2hlcmUgdGhpcyBzdGlsbCBzaW1wbGlmaWVzIHRoZW0uCnNpbSBTbWFsbHZpbGxlIHsKICBhZ2VudHM6IDQKCiAgcm9sZSBWaWxsYWdlciB7CiAgICB0ZWFtOiAidmlsbGFnZXIiCiAgICBtZW1vcnk6IGdlbmVyYXRpdmUoNikKICAgIHNlZXM6IG5vbmUKICAgIGNvdW50OiByZW1haW5kZXIKICB9CgogIHdvcmxkIHsKICAgIHdpZHRoOiAzMAogICAgaGVpZ2h0OiAzMAogICAgbG9jYXRpb24gSG9tZSAgIHsgdGFnOiAiaG9tZSIsIGNhcGFjaXR5OiAxLCBjb3VudDogNCB9CiAgICBsb2NhdGlvbiBDYWZlICAgeyB0YWc6ICJzb2NpYWwiLCBjYXBhY2l0eTogNiwgY291bnQ6IDEgfQogICAgbG9jYXRpb24gTWFya2V0IHsgdGFnOiAic29jaWFsIiwgY2FwYWNpdHk6IDYsIGNvdW50OiAxIH0KICAgIGxvY2F0aW9uIFBhcmsgICB7IHRhZzogInNvY2lhbCIsIGNhcGFjaXR5OiAxMCwgY291bnQ6IDEgfQogIH0KCiAgZm4gcGVyc29uYXMoKSB7CiAgICByZXR1cm4gWwogICAgICAiTWFyYSwgYSBiYWtlciB3aG8gd2FrZXMgYXQgZGF3biBhbmQgbG92ZXMgdHJhZGluZyBnb3NzaXAuIiwKICAgICAgIk9sZCBUb21hcywgYSByZXRpcmVkIHRlYWNoZXIgd2hvIHJlYWRzIG9uIGEgcGFyayBiZW5jaCBtb3N0IGFmdGVybm9vbnMuIiwKICAgICAgIlByaXlhLCBhIHlvdW5nIG11c2ljaWFuIHdobyBwcmFjdGljZXMgZ3VpdGFyIGFuZCBkcmVhbXMgb2YgdGhlIGNpdHkuIiwKICAgICAgIkRlc2hhd24sIGEgc2hvcGtlZXBlciB3aG8gdmFsdWVzIHJvdXRpbmUgYW5kIHdvcnJpZXMgYWJvdXQgdGhlIG1hcmtldCdzIHNsb3cgc2Vhc29uLiIsCiAgICBdCiAgfQoKICBmbiBzZXR0bGVfaW4oKSB7CiAgICBsZXQgdmlsbGFnZXJzID0gYWxpdmUoKQogICAgbGV0IGJpb3MgPSBwZXJzb25hcygpCiAgICBmb3IgaSBpbiBbMCwgMSwgMiwgM10gewogICAgICBzZXRfcGVyc29uYSh2aWxsYWdlcnNbaV0sIGJpb3NbaV0pCiAgICB9CiAgICBzcGF3bl9hZ2VudHNfYXQodmlsbGFnZXJzLCAiaG9tZSIpCiAgfQoKICBmbiBwbGFuX3RoZV9kYXkoYSkgewogICAgbWFrZV9wbGFuKAogICAgICBhLAogICAgICAiSXQncyB0aGUgc3RhcnQgb2YgYSBuZXcgZGF5IGluIGEgc21hbGwgdG93bi4gU2tldGNoIHlvdXIgcGxhbiBmb3IgdGhlIGRheSwgZnJvbSBtb3JuaW5nIHRvIGV2ZW5pbmcuIiwKICAgICAgc3RlcHM9NiwKICAgICkKICB9CgogIGZuIGhlYWRfdG93YXJkX2FjdGlvbihhLCBhY3Rpb24pIHsKICAgIGxldCB0YWcgPSBhc2tfY2hvaWNlKAogICAgICBhLAogICAgICAiR2l2ZW4gd2hhdCB5b3UncmUgYWJvdXQgdG8gZG8gKCIgKyBhY3Rpb24gKyAiKSwgYXJlIHlvdSBoZWFkZWQgaG9tZSBvciBzb21ld2hlcmUgc29jaWFsIGluIHRvd24/IiwKICAgICAgWyJob21lIiwgInNvY2lhbCJdLAogICAgKQogICAgbGV0IGNhbmRpZGF0ZXMgPSBsb2NhdGlvbnNfYnlfdGFnKHRhZykKICAgIGlmIGNvdW50KGNhbmRpZGF0ZXMpID4gMCB7CiAgICAgIG1vdmVfdG8oYSwgcmFuZG9tX2Nob2ljZShjYW5kaWRhdGVzKSkKICAgIH0KICB9CgogIC8vIFRoZSByZWN1cnNpdmUgZGVjb21wb3NpdGlvbiBpdHNlbGY6IHJlLWRlY29tcG9zZSBvbmx5IHdoZW4gdGhlIGxhc3QgZmluZS0KICAvLyBncmFpbmVkIGNodW5rIG9mIHRoZSBjdXJyZW50IHRvcC1sZXZlbCBzdGVwIGhhcyBydW4gb3V0LCBtYXRjaGluZyB0aGUgcGFwZXIncwogIC8vICJkZWNvbXBvc2UgdGhlIG5leHQgcmVsZXZhbnQgcGllY2UsIG5vdCB0aGUgd2hvbGUgZGF5IHVwIGZyb250IiBhcHByb2FjaC4KICBmbiBsaXZlX3RoZV9ob3VyKGEpIHsKICAgIGlmIGNvdW50KGEuc3VicGxhbikgPT0gMCB7CiAgICAgIGRlY29tcG9zZV9zdGVwKGEsIGNodW5rcz0zKQogICAgfQogICAgbGV0IGFjdGlvbiA9IGN1cnJlbnRfYWN0aW9uKGEpCiAgICBpZiBhY3Rpb24gIT0gbnVsbCB7CiAgICAgIGhlYWRfdG93YXJkX2FjdGlvbihhLCBhY3Rpb24pCiAgICAgIGJyb2FkY2FzdChhLCBhY3Rpb24pCiAgICB9CiAgfQoKICAvLyBSZWFjdGluZzogYW4gYWdlbnQgdGhhdCBmaW5kcyBpdHNlbGYgbmVhciBhIG5laWdoYm9yIGRlY2lkZXMgd2hldGhlciB0byBzdGF5CiAgLy8gb24tcGxhbiBvciByZWFjdCAtLSBhbmQgYSByZWFjdGlvbiB0aGF0IGFtb3VudHMgdG8gIm5vdGljZSB0aGVtIiBsZWFkcyBpbnRvIGFuCiAgLy8gYWN0dWFsIGdlbmVyYXRlZCBkaWFsb2d1ZSBiZXR3ZWVuIHRoZSB0d28gYWdlbnRzJyBvd24gbW9kZWxzLgogIGZuIG1lZXRfbmVpZ2hib3JzKGEpIHsKICAgIGxldCBvdGhlcnMgPSBuZWFyYnkoYSwgOCkKICAgIGlmIGNvdW50KG90aGVycykgPT0gMCB7CiAgICAgIHJldHVybgogICAgfQogICAgbGV0IHBhcnRuZXIgPSByYW5kb21fY2hvaWNlKG90aGVycykKICAgIGxldCByZWFjdGlvbiA9IHJlYWN0KGEsIHBhcnRuZXIuc2VhdCArICIgaXMgcmlnaHQgaGVyZSB0b28uIikKICAgIGlmIHJlYWN0aW9uICE9IG51bGwgewogICAgICBjb252ZXJzZShhLCBwYXJ0bmVyLCB0b3BpYz0idGhlIHRvd24iLCBtYXhfdHVybnM9MykKICAgIH0KICB9CgogIHBoYXNlIEhvdXIgewogICAgZm9yIGEgaW4gYWxpdmUoKSB7CiAgICAgIGlmIGNvdW50KGEucGxhbikgPT0gMCB7CiAgICAgICAgcGxhbl90aGVfZGF5KGEpCiAgICAgIH0KICAgICAgbGl2ZV90aGVfaG91cihhKQogICAgICBtZWV0X25laWdoYm9ycyhhKQogICAgICBtYXliZV9yZWZsZWN0KGEsIHRocmVzaG9sZD0zLjApCiAgICAgIGFkdmFuY2VfcGxhbihhKQogICAgfQogIH0KCiAgd2luX2NvbmRpdGlvbiB7CiAgICBpZiByb3VuZCA+IDEyIHsKICAgICAgcmV0dXJuICJkYXlfY29tcGxldGUiCiAgICB9CiAgfQoKICBsb29wIHsKICAgIGlmIHJvdW5kID09IDEgewogICAgICBzZXR0bGVfaW4oKQogICAgfQogICAgcnVuIEhvdXIKICAgIGxldCB3aW5uZXIgPSBjaGVja193aW4oKQogICAgaWYgd2lubmVyICE9IG51bGwgewogICAgICByZXR1cm4gd2lubmVyCiAgICB9CiAgfQp9Cg==",
 };
 
 const EXAMPLE_META = [
@@ -1403,6 +1570,7 @@ const EXAMPLE_META = [
   { file: "village.sl", label: "village.sl \u2014 hidden roles + world{}, 6-10 agents" },
   { file: "city.sl", label: "city.sl \u2014 spatial + scale, 5,050 agents" },
   { file: "outbreak.sl", label: "outbreak.sl \u2014 spatial contagion, 620 agents" },
+  { file: "smallville.sl", label: "smallville.sl \u2014 Generative Agents: persona, planning, reacting, dialogue, 4 agents" },
 ];
 
 function escapeHtml(s) {
@@ -1410,7 +1578,7 @@ function escapeHtml(s) {
 }
 
 const SL_KEYWORDS = "sim agents memory role fn phase win_condition loop world let if else while for in return run break true false null and or not".split(" ");
-const SL_BUILTINS = "ask ask_choice ask_all ask_choice_all broadcast whisper remember reflect alive all_agents with_role team_of eliminate tally count last random_choice str print check_win locations locations_by_tag spawn_agents_at move_to location_of agents_at nearby".split(" ");
+const SL_BUILTINS = "ask ask_choice ask_all ask_choice_all broadcast whisper remember reflect maybe_reflect set_persona make_plan current_step decompose_step current_action advance_plan react converse alive all_agents with_role team_of eliminate tally count last random_choice str print check_win locations locations_by_tag spawn_agents_at move_to location_of agents_at nearby".split(" ");
 const HL_RE = new RegExp(
   "(//[^\\n]*)"
   + '|("(?:\\\\.|[^"\\\\])*")'
@@ -2079,7 +2247,10 @@ document.querySelector('[data-panel="manual"]').innerHTML = `
     <tr><td><code>ask</code> / <code>ask_choice</code></td><td>Calls an agent's model; <code>ask_choice</code> constrains the reply to one option.</td></tr>
     <tr><td><code>ask_all</code> / <code>ask_choice_all</code></td><td>Bulk versions &mdash; every call fires concurrently, returning <code>{agent: result}</code>. How a game's LLM tier scales past a handful of agents.</td></tr>
     <tr><td><code>broadcast</code> / <code>whisper</code></td><td>Publish an event to everyone, or only to a given list of agents.</td></tr>
-    <tr><td><code>remember</code> / <code>reflect</code></td><td>Add a private note; synthesize 1-3 insights from retrieved memory.</td></tr>
+    <tr><td><code>remember</code> / <code>reflect</code> / <code>maybe_reflect</code></td><td>Add a private note; synthesize 1-3 insights from retrieved memory; same, but only once accumulated importance since the last reflection crosses a threshold.</td></tr>
+    <tr><td><code>set_persona</code> / <code>make_plan</code></td><td>Set an agent's backstory (folded into every prompt); sketch a broad-strokes plan for the day from persona + memory.</td></tr>
+    <tr><td><code>current_step</code> / <code>decompose_step</code> / <code>current_action</code> / <code>advance_plan</code></td><td>Read/decompose/walk the plan &mdash; recursive top-down decomposition, one level expanded on demand.</td></tr>
+    <tr><td><code>react</code> / <code>converse</code></td><td>Decide whether an observation interrupts the plan; run a real multi-turn dialogue between two agents' own models.</td></tr>
     <tr><td><code>alive()</code> / <code>all_agents()</code></td><td>Living agents / every agent regardless of status.</td></tr>
     <tr><td><code>with_role(name)</code> / <code>team_of(a)</code></td><td>Agents holding a role; that agent's team.</td></tr>
     <tr><td><code>eliminate</code> / <code>tally</code></td><td>Mark an agent dead; pick the majority target from a vote dict.</td></tr>
@@ -2088,6 +2259,9 @@ document.querySelector('[data-panel="manual"]').innerHTML = `
     <tr><td><code>location_of</code> / <code>agents_at</code> / <code>nearby</code></td><td>Spatial queries.</td></tr>
     <tr><td><code>count</code>, <code>last</code>, <code>random_choice</code>, <code>str</code>, <code>print</code>, <code>check_win</code></td><td>Utility.</td></tr>
   </table>
+
+  <h3>Generative Agents (Park et al. 2023)</h3>
+  <p>Beyond <code>generative(k)</code> memory retrieval, <strong>smallville.sl</strong> in the picker runs the paper's full loop: <code>set_persona</code> gives each agent a backstory, <code>make_plan</code>/<code>decompose_step</code> recursively break a day into broad strokes then concrete actions, <code>react</code> decides whether a nearby neighbor interrupts the plan, <code>converse</code> generates the resulting dialogue between the two agents' own models, and <code>maybe_reflect</code> triggers reflection once accumulated importance crosses a threshold rather than on a fixed cadence &mdash; the same single flat mechanism produces the paper's reflection hierarchy, since reflections are written back at high importance and get reflected on again later.</p>
 
   <h3>Scaling without new syntax</h3>
   <p>There's no special "scripted vs. LLM" keyword. <code>role { count: 5000 }</code> and an ordinary <code>fn</code> already suffice &mdash; see <strong>city.sl</strong> and <strong>outbreak.sl</strong> in the picker: most agents are moved by a plain function with zero LLM calls, while a small role is asked something every round via <code>ask_choice_all</code>.</p>

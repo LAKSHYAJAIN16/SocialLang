@@ -45,7 +45,7 @@ Also published as a Claude Artifact for quick sharing — same file, hosted.
 
 ## Files
 
-- `index.html` — the whole thing: engine, UI, and the five `games/*.sl` example
+- `index.html` — the whole thing: engine, UI, and the six `games/*.sl` example
   files (base64-embedded, decoded at load time so quoting inside their comments
   can't collide with the page's own JavaScript). Editing this file means editing
   the JS engine, the editor/syntax-highlighting UI, and the embedded example

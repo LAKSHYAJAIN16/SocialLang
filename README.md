@@ -135,7 +135,25 @@ SocialLang functions receiving `events` (everything visible to this agent) and `
 
 `reflect(agent)` (below) is the paper's other major mechanism: periodically
 synthesizing higher-level insights from an agent's memory and writing them back as
-new, high-importance memories.
+new, high-importance memories. `maybe_reflect(agent, threshold=)` is the paper's
+actual trigger for that — it fires only once the summed importance of an agent's
+memories since its last reflection crosses `threshold`, instead of a script
+picking a fixed cadence.
+
+### Generative Agents architecture
+
+Beyond memory retrieval and reflection (above), the rest of Park et al. 2023's
+architecture — persona, planning, reacting, and dialogue generation — is built in
+too. `games/smallville.sl` runs the whole loop end to end; see its comments and
+[DESIGN.md](DESIGN.md) for how each piece maps onto the paper and where it still
+simplifies it.
+
+| Mechanism | Builtin(s) |
+|---|---|
+| Persona | `set_persona(agent, text)` folds a backstory into every prompt that agent sees. |
+| Planning | `make_plan(agent, goal, steps=)` sketches a broad-strokes schedule and stores it on the agent (and in its memory); `decompose_step(agent, step=, chunks=)` recursively expands the *current* step into a few concrete actions, on demand rather than the whole day up front; `current_step`/`current_action`/`advance_plan` read and walk the resulting two-level plan. |
+| Reacting | `react(agent, observation)` asks whether an observation (e.g. a neighbor showing up) interrupts the current plan — returns `null` to continue, or a new one-sentence action. |
+| Dialogue | `converse(agent_a, agent_b, topic=, max_turns=)` runs a real multi-turn exchange between the two agents' own models (each a genuine `ask()`-style call with that agent's own persona and memory), stopping at a goodbye-shaped line or `max_turns`. |
 
 ### Built-in functions
 
@@ -147,7 +165,12 @@ new, high-importance memories.
 | `broadcast(text)` / `broadcast(agent, text)` | Publishes an event every agent can see |
 | `whisper(agents, text)` | Publishes an event only the given agents can see |
 | `remember(agent, text)` | Adds a private note to one agent's own memory |
-| `reflect(agent)` | Synthesizes 1-3 insights from an agent's retrieved memory and stores them back as high-importance memories |
+| `reflect(agent)` / `maybe_reflect(agent, threshold=)` | Synthesizes 1-3 insights from an agent's retrieved memory and stores them back as high-importance memories; `maybe_reflect` only does so once accumulated importance crosses `threshold` |
+| `set_persona(agent, text)` | Sets a free-text backstory folded into every prompt that agent sees |
+| `make_plan(agent, goal, steps=)` | Sketches a broad-strokes daily plan and stores it on the agent |
+| `current_step(agent)` / `decompose_step(agent, step=, chunks=)` / `current_action(agent)` / `advance_plan(agent)` | Read, recursively expand, and walk an agent's plan |
+| `react(agent, observation)` | Decides whether an observation interrupts the current plan (`null`) or replaces it (returned text) |
+| `converse(agent_a, agent_b, topic=, max_turns=)` | Runs a generated multi-turn dialogue between two agents, returns the transcript |
 | `alive()` / `all_agents()` | Currently-alive agents / every agent regardless of status |
 | `with_role(name)` | Agents (alive or not) holding a role |
 | `team_of(agent)` | That agent's role's team string |
@@ -174,7 +197,7 @@ implemented yet) live in [DESIGN.md](DESIGN.md).
 
 `web/index.html` is a self-contained IDE — SocialLang's lexer, parser, and
 interpreter ported to JavaScript, running entirely client-side. Open it directly (or
-`python -m http.server 8000 --directory web`), pick from all five example games, and
+`python -m http.server 8000 --directory web`), pick from all six example games, and
 run them against a mock LLM provider. See [web/README.md](web/README.md) for what's
 different from the real Python implementation (no real API calls, no concurrency,
 no spatial rendering — that's what the CLI and Unity viewer below are for).
@@ -223,6 +246,7 @@ current status.
 | `games/village.sl` | 6-10 | Hidden roles combined with a `world {}` — location gates who hears wolves' night chatter |
 | `games/city.sl` | 5,050 | Large-population + spatial wandering + a concurrent LLM tier (`ask_choice_all`) |
 | `games/outbreak.sl` | 620 | Spread driven by `nearby()`/`eliminate()`, with an LLM tier's policy vote measurably changing the outcome |
+| `games/smallville.sl` | 4 | The full Generative Agents loop: persona, recursive planning, reacting, dialogue, threshold-triggered reflection |
 
 ## Tests
 

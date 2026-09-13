@@ -225,9 +225,67 @@ into the memory stream as a new, distinctively important memory — is the `refl
 builtin: it retrieves an agent's most important/recent memories (via the same
 recency+importance+relevance scoring as `generative`), asks the agent's own model to
 state 1-3 conclusions, and writes each one back as a `reflection`-kind event with
-importance `0.9`. A script decides when to call it (e.g. once per day-phase) — this is a
-single-level simplification of the paper's hierarchical reflection tree, not a full
-port.
+importance `0.9`. A script can call `reflect()` on any cadence it likes, but the
+paper's actual trigger is `maybe_reflect(agent, threshold=)`
+(`Interpreter._bi_maybe_reflect`): it sums the importance of every event visible to
+the agent since its `last_reflect_seq` cursor, and only calls `reflect()` (advancing
+that cursor) once the sum crosses `threshold`. Reflection events are themselves
+written back at importance `0.9`, so they count toward the *next* threshold sum and
+get retrieved again by that same recency+importance+relevance scoring the next time
+reflection runs — one flat mechanism producing the paper's reflection hierarchy
+(reflections synthesized from earlier reflections) without a separate tree
+structure to maintain.
+
+### Generative Agents architecture
+
+Memory retrieval and reflection (above) are only half of Park et al. 2023's
+architecture. The rest -- persona, planning, reacting, and dialogue generation --
+is implemented too, as builtins in `interpreter.py` (and mirrored in
+`web/index.html`'s JS port, see below):
+
+- **Persona** — `set_persona(agent, text)` sets `Agent.persona`, a free-text
+  backstory folded into every prompt that agent sees (`_identity_for`). The paper's
+  agents also carry structured traits/relationships; this implementation keeps it
+  to one free-text field a game can fill however it likes (see `games/smallville.sl`'s
+  `personas()`), rather than a fixed schema.
+- **Planning** — the paper's plans are generated top-down and recursively
+  decomposed: a full day sketched in broad strokes, then the current chunk broken
+  into hourly actions, then further into 5-15 minute ones. This implementation
+  keeps two levels rather than three: `make_plan(agent, goal, steps=)` asks the
+  agent's model for a broad-strokes schedule (parsed from `"time: activity"` lines
+  into `Agent.plan`, a list of `{time, activity}` steps, also written to memory as a
+  `plan`-kind event), and `decompose_step(agent, step=, chunks=)` expands one step
+  (by default `current_step(agent)`, i.e. `Agent.plan[Agent.plan_cursor]`) into a
+  handful of concrete actions in `Agent.subplan`. Decomposition happens on demand,
+  one step at a time, matching the paper's "expand only the next relevant piece"
+  approach rather than eagerly expanding an entire day up front.
+  `current_action(agent)` reads whichever cursor is live (`subplan_cursor` if a
+  subplan exists, else the top-level step's `activity`); `advance_plan(agent)` walks
+  `subplan_cursor` forward, falling through to `plan_cursor` once the subplan is
+  exhausted (and clearing it, so the next `current_action`/`decompose_step` call
+  re-expands the *new* current step rather than reusing a stale one).
+- **Reacting** — `react(agent, observation)` is the paper's "should I continue or
+  react" decision: given free text describing what the agent just observed (e.g. a
+  neighbor showing up), it asks the agent's model to either respond with exactly
+  `CONTINUE` or describe a one-sentence new immediate action, and returns `null` in
+  the first case, the new action text in the second. It's a single LLM call rather
+  than the paper's separate importance-gated trigger step, since SocialLang has no
+  standing "world tick" loop of its own for a reaction to interrupt — a game script
+  decides when to call `react()` at all (see `smallville.sl`'s `meet_neighbors`).
+- **Dialogue generation** — `converse(agent_a, agent_b, topic=, max_turns=)` runs a
+  real multi-turn exchange: each turn is a genuine `ask()`-shaped call against that
+  turn's speaker (their own model, persona, and memory context via the same
+  `_prompt_pieces` helper `ask()`/`ask_choice()` use), alternating speakers, and
+  appending each line as a `dialogue`-kind event visible to both participants (so it
+  becomes part of each agent's own memory stream, exactly like the paper's
+  conversations do). The exchange stops early at a line that looks like a goodbye
+  (`_looks_like_farewell` — a small keyword heuristic, not another LLM call) or
+  after `max_turns` exchanges either way.
+
+`games/smallville.sl` wires all of this together — four agents with distinct
+personas, a spatial `world {}` of homes and shared social spots, a 12-hour "day"
+loop that plans, decomposes, moves, reacts, converses, and threshold-reflects each
+hour. See its header comment for how each mechanism maps onto the game logic.
 
 ### Real embeddings and LLM-rated importance
 
@@ -263,19 +321,24 @@ changing `retrieve()`'s recency+importance+relevance formula shape.
 
 **Implemented:** lexer, parser, tree-walking interpreter; all three memory patterns
 above plus fully custom in-language ones; real embedding-based relevance and
-LLM-rated importance for `generative(k)` memory (see above); an optional `world { }`
-block for procedural spatial layout, spatial builtins, and concurrent bulk-`ask`
-builtins for scaling a population into the thousands (see "World and scale" above);
-`sociallang/cli.py` (`run`, `schema`, `visualize`, `check`); an HTML replay visualizer
-(`sociallang/visualize.py`) with a public/private event timeline and agent roster;
-JSON schema export (`sociallang/schema_export.py`) — "export models and model
-patterns" for external tooling, i.e. a game's roles and memory patterns as plain
-JSON without parsing SocialLang. Five working example games (`mafia.sl`,
-`trust_game.sl`, `city.sl`, `village.sl`, `outbreak.sl`). 61 tests covering the lexer,
-parser, interpreter semantics (including a deterministic vote-tally/eliminate test, a
+LLM-rated importance for `generative(k)` memory (see above); the full Generative
+Agents architecture beyond memory/reflection — persona, recursive plan
+decomposition, reacting, and dialogue generation (see "Generative Agents
+architecture" above); an optional `world { }` block for procedural spatial layout,
+spatial builtins, and concurrent bulk-`ask` builtins for scaling a population into
+the thousands (see "World and scale" above); `sociallang/cli.py` (`run`, `schema`,
+`visualize`, `check`); an HTML replay visualizer (`sociallang/visualize.py`) with a
+public/private event timeline and agent roster; JSON schema export
+(`sociallang/schema_export.py`) — "export models and model patterns" for external
+tooling, i.e. a game's roles and memory patterns as plain JSON without parsing
+SocialLang. Six working example games (`mafia.sl`, `trust_game.sl`, `city.sl`,
+`village.sl`, `outbreak.sl`, `smallville.sl`). 74 tests covering the lexer, parser,
+interpreter semantics (including a deterministic vote-tally/eliminate test, a
 memory-windowing test, deterministic world generation, spatial builtins, bulk-ask
 concurrency/ordering, and the live WebSocket bridge end to end), the native
-memory-retrieval math, the embedding providers, and schema export.
+memory-retrieval math, the embedding providers, schema export, and the Generative
+Agents builtins (persona/plan/react/converse/maybe_reflect, `test_generative_agents.py`)
+plus an end-to-end `smallville.sl` run.
 
 A live event-streaming bridge (`sociallang/engine/live.py`, `sociallang run --live`)
 lets an external viewer watch a run as it happens instead of only reading the final
@@ -289,10 +352,12 @@ yet — treat "does it actually run" as open until someone does that.
 
 `web/index.html` is a separate, hand-maintained JavaScript port of the lexer/parser/
 interpreter/memory-retrieval logic (not the live bridge or Unity's renderer) — a
-self-contained browser IDE with all five example games embedded, a mock LLM provider
-standing in for real ones (a public page can't hold API keys), and a tutorial panel.
-It's a full reimplementation, not a thin wrapper around the Python code, so a future
-language change needs to be ported there by hand too; see `web/README.md`.
+self-contained browser IDE with all six example games embedded (Generative Agents
+builtins included — persona/plan/react/converse/maybe_reflect all have JS
+equivalents), a mock LLM provider standing in for real ones (a public page can't
+hold API keys), and a tutorial panel. It's a full reimplementation, not a thin
+wrapper around the Python code, so a future language change needs to be ported
+there by hand too; see `web/README.md`.
 
 **Not implemented / open questions:**
 
@@ -322,3 +387,12 @@ language change needs to be ported there by hand too; see `web/README.md`.
   regardless of its declared capacity. It's available as plain data a game can read
   itself (`count(agents_at(loc)) < loc.capacity`) and act on, not an automatic
   constraint the builtins apply for you.
+- `react()`/`converse()` are single-call simplifications of the paper's fuller
+  mechanisms: the paper gates reacting behind its own importance-scored triggering
+  step before deciding whether to interrupt, and its dialogue continuation is
+  itself retrieval-augmented per turn (each reply retrieves relevant memories
+  fresh) rather than one open-ended exchange. Here, a game script decides *when*
+  to call `react()` at all (see `smallville.sl`'s `meet_neighbors`), and each
+  `converse()` turn already goes through the normal memory-retrieval path via
+  `_prompt_pieces`/`buildContextFor` — just without a dedicated "what's relevant to
+  this specific reply" re-query on top of that.

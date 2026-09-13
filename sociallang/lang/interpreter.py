@@ -20,6 +20,22 @@ class SLRuntimeError(Exception):
     pass
 
 
+_FAREWELL_WORDS = (
+    "bye", "goodbye", "good bye", "see you", "farewell", "gotta go", "have to go",
+    "talk later", "talk to you later", "catch you later",
+)
+
+
+def _looks_like_farewell(line: str) -> bool:
+    """Cheap heuristic close condition for converse()'s turn loop -- a real natural-
+    conversation end detector would itself be an LLM call, which is overkill for
+    deciding when two agents are done talking; this plus `max_turns` keeps a
+    dialogue from running forever without one.
+    """
+    lowered = line.lower()
+    return any(w in lowered for w in _FAREWELL_WORDS)
+
+
 class ReturnSignal(Exception):
     def __init__(self, value: Any):
         self.value = value
@@ -53,6 +69,13 @@ class Agent:
     x: float | None = None
     y: float | None = None
     location_id: str | None = None
+    # -- Generative Agents (Park et al. 2023) state, beyond the memory stream itself --
+    persona: str = ""  # free-text identity/backstory folded into every prompt, see _identity_for
+    plan: list = field(default_factory=list)  # broad-strokes steps: [{"time": str, "activity": str}, ...]
+    plan_cursor: int = 0  # index into `plan` of the step currently being acted on
+    subplan: list = field(default_factory=list)  # decompose_step()'s fine-grained actions for the current plan step
+    subplan_cursor: int = 0
+    last_reflect_seq: int = 0  # high-water mark of Event.seq already counted toward maybe_reflect()'s threshold
 
     def __hash__(self) -> int:
         return hash(self.seat)
@@ -457,6 +480,7 @@ class Interpreter:
                 "seat": obj.seat, "role": obj.role_name, "team": obj.team,
                 "alive": obj.alive, "model": obj.model_key, "death_cause": obj.death_cause,
                 "x": obj.x, "y": obj.y, "location": self.world_locations.get(obj.location_id),
+                "persona": obj.persona, "plan": obj.plan, "subplan": obj.subplan,
             }
         elif isinstance(obj, Event):
             mapping = {
@@ -589,6 +613,8 @@ class Interpreter:
 
     def _identity_for(self, agent: Agent, role: "RoleDecl") -> str:
         identity = f"You are {agent.seat}. Your role is {role.name} ({role.team} team)."
+        if agent.persona:
+            identity += f" {agent.persona}"
         if role.sees == "teammates":
             teammates = [a.seat for a in self.agents if a is not agent and a.role_name == role.name]
             if teammates:
@@ -717,6 +743,186 @@ class Interpreter:
             self._append_event(kind="reflection", text=insight, author=agent.seat, visible_to={agent.seat}, importance=0.9)
         return insights
 
+    def _bi_maybe_reflect(self, args: list[Any], kwargs: dict[str, Any]) -> list[str]:
+        """Threshold-triggered counterpart to reflect(): the paper reflects when the
+        sum of importance scores of memories since the last reflection crosses a
+        fixed threshold, rather than on a script-decided cadence. Reflection events
+        are themselves written back at importance 0.9 (see _bi_reflect), so they
+        count toward *this* agent's own next threshold sum and get retrieved again
+        by the same recency+importance+relevance scoring the next time reflect()
+        runs -- reflecting on reflections, a single flat mechanism that produces the
+        paper's hierarchy without a separate tree data structure to maintain.
+        Returns the new insights, or [] if the threshold wasn't crossed (no LLM call
+        is made in that case).
+        """
+        agent: Agent = args[0]
+        threshold = float(kwargs.get("threshold", args[1] if len(args) > 1 else 4.0))
+        visible = self._visible_events_for(agent)
+        new_events = [e for e in visible if e.seq > agent.last_reflect_seq]
+        if sum(e.importance for e in new_events) < threshold:
+            return []
+        insights = self._bi_reflect([agent])
+        agent.last_reflect_seq = self.seq
+        return insights
+
+    def _bi_set_persona(self, args: list[Any]) -> None:
+        agent: Agent = args[0]
+        agent.persona = self._stringify(args[1])
+
+    def _bi_make_plan(self, args: list[Any], kwargs: dict[str, Any]) -> list[dict]:
+        """Top level of the paper's recursive plan decomposition: a rough, broad-
+        strokes schedule (e.g. "9am: eat breakfast") generated from the agent's
+        persona and memory context, stored on the agent and also written into its
+        own memory stream (the paper keeps plans in memory too, so later retrieval
+        and reflection can refer to them). decompose_step() below does the next
+        level down, on demand rather than all at once, matching the paper's
+        top-down-as-needed decomposition instead of eagerly expanding a whole day
+        into 5-minute chunks up front.
+        """
+        agent: Agent = args[0]
+        goal = args[1] if len(args) > 1 else kwargs.get("goal", "Plan what you'll do.")
+        steps = int(kwargs.get("steps", 6))
+        prompt = (
+            f"{goal}\n\nSketch a rough plan of about {steps} broad-strokes steps for what "
+            "you'll do, in order. Respond with exactly one step per line, formatted as "
+            "'time: activity' (e.g. '9am: eat breakfast at home'). No numbering, no extra "
+            "commentary."
+        )
+        identity, user_prompt = self._prompt_pieces(agent, prompt)
+        resp = agent.provider.complete(identity, user_prompt, temperature=0.7, max_tokens=300)
+        plan: list[dict] = []
+        for line in (resp.text or "").splitlines():
+            line = line.strip("-* ").strip()
+            if not line:
+                continue
+            if ":" in line:
+                time_part, activity = line.split(":", 1)
+                plan.append({"time": time_part.strip(), "activity": activity.strip()})
+            else:
+                plan.append({"time": "", "activity": line})
+        if not plan:
+            plan = [{"time": "", "activity": goal}]
+        agent.plan = plan[:steps] if steps > 0 else plan
+        agent.plan_cursor = 0
+        agent.subplan = []
+        agent.subplan_cursor = 0
+        summary = "; ".join(f"{s['time']}: {s['activity']}" if s["time"] else s["activity"] for s in agent.plan)
+        self._append_event(kind="plan", text=f"Plan: {summary}", author=agent.seat, visible_to={agent.seat}, importance=0.5)
+        return agent.plan
+
+    def _bi_current_step(self, args: list[Any]) -> dict | None:
+        agent: Agent = args[0]
+        if not agent.plan or agent.plan_cursor >= len(agent.plan):
+            return None
+        return agent.plan[agent.plan_cursor]
+
+    def _bi_decompose_step(self, args: list[Any], kwargs: dict[str, Any]) -> list[str]:
+        """Second level of recursive decomposition: turns one broad-strokes plan step
+        into a handful of concrete, few-minutes-each actions. Defaults to the
+        agent's own current_step() if none is given.
+        """
+        agent: Agent = args[0]
+        step = args[1] if len(args) > 1 else self._bi_current_step([agent])
+        chunks = int(kwargs.get("chunks", 4))
+        if step is None:
+            return []
+        activity = step["activity"] if isinstance(step, dict) else self._stringify(step)
+        prompt = (
+            f"Your current broad-strokes plan step is: '{activity}'. Break it down into "
+            f"about {chunks} smaller, concrete, sequential actions (a few minutes each). "
+            "Respond with exactly one action per line, no numbering."
+        )
+        identity, user_prompt = self._prompt_pieces(agent, prompt)
+        resp = agent.provider.complete(identity, user_prompt, temperature=0.7, max_tokens=250)
+        actions = [line.strip("-* ").strip() for line in (resp.text or "").splitlines() if line.strip()]
+        if not actions:
+            actions = [activity]
+        agent.subplan = actions[:chunks] if chunks > 0 else actions
+        agent.subplan_cursor = 0
+        return agent.subplan
+
+    def _bi_current_action(self, args: list[Any]) -> str | None:
+        agent: Agent = args[0]
+        if agent.subplan and agent.subplan_cursor < len(agent.subplan):
+            return agent.subplan[agent.subplan_cursor]
+        step = self._bi_current_step([agent])
+        return step["activity"] if step else None
+
+    def _bi_advance_plan(self, args: list[Any]) -> None:
+        """Moves to the next fine-grained action if decompose_step() populated one,
+        otherwise to the next broad-strokes step. A game calls this once it's done
+        acting on current_action() for the round/tick.
+        """
+        agent: Agent = args[0]
+        if agent.subplan and agent.subplan_cursor < len(agent.subplan) - 1:
+            agent.subplan_cursor += 1
+            return
+        agent.subplan = []
+        agent.subplan_cursor = 0
+        if agent.plan and agent.plan_cursor < len(agent.plan) - 1:
+            agent.plan_cursor += 1
+
+    def _bi_react(self, args: list[Any], kwargs: dict[str, Any]) -> str | None:
+        """The paper's reacting mechanism: given something the agent just observed,
+        decide whether to keep following the current plan or interrupt it. Returns
+        None to mean "continue as planned", or a one-sentence new immediate action
+        to mean "react instead" -- callers typically feed a non-None result back in
+        as the new current_action (e.g. by overwriting agent.subplan[0], or simply
+        acting on the returned text directly) and/or trigger converse() when the
+        observation was about meeting another agent.
+        """
+        agent: Agent = args[0]
+        observation: str = args[1]
+        current = self._bi_current_action([agent]) or "nothing in particular"
+        prompt = (
+            f"You observe: {observation}\nYour current planned action is: {current}\n\n"
+            "Decide: continue with your current planned action, or react to what you just "
+            "observed? If you continue, respond with exactly: CONTINUE\nIf you react, "
+            "respond with one sentence describing your new immediate action instead."
+        )
+        identity, user_prompt = self._prompt_pieces(agent, prompt)
+        resp = agent.provider.complete(identity, user_prompt, temperature=0.8, max_tokens=80)
+        text = (resp.text or "").strip()
+        self._append_event(kind="ask", text=f"(observed: {observation}) {text}", author=agent.seat, visible_to={agent.seat})
+        if text.strip(".").upper() == "CONTINUE":
+            return None
+        return text
+
+    def _bi_converse(self, args: list[Any], kwargs: dict[str, Any]) -> list[str]:
+        """The paper's dialogue-generation mechanism: two agents that have met
+        exchange turns (each a real ask() against that agent's own model, own
+        persona, own memory), alternating until one says something that reads like
+        a goodbye or `max_turns` exchanges pass. Every line is written as a
+        `dialogue` event visible to both participants, so it becomes part of each
+        agent's memory stream exactly like the paper's conversations do. Returns
+        the transcript as a list of "Seat: line" strings.
+        """
+        a: Agent = args[0]
+        b: Agent = args[1]
+        topic = args[2] if len(args) > 2 else kwargs.get("topic", "")
+        max_turns = int(kwargs.get("max_turns", 4))
+        seats = {a.seat, b.seat}
+        transcript: list[str] = []
+        speaker, other = a, b
+        prompt = (
+            f"You run into {other.seat}."
+            + (f" Topic on your mind: {topic}." if topic else "")
+            + " Say one thing to them, one sentence."
+        )
+        for _ in range(max(max_turns, 0) * 2):
+            identity, user_prompt = self._prompt_pieces(speaker, prompt)
+            resp = speaker.provider.complete(identity, user_prompt, temperature=0.9, max_tokens=100)
+            line = (resp.text or "").strip()
+            if not line:
+                break
+            self._append_event(kind="dialogue", text=f"{speaker.seat}: {line}", author=speaker.seat, visible_to=set(seats))
+            transcript.append(f"{speaker.seat}: {line}")
+            if _looks_like_farewell(line):
+                break
+            speaker, other = other, speaker
+            prompt = f'{other.seat} just said to you: "{line}" Respond with one sentence.'
+        return transcript
+
     def _bi_eliminate(self, args: list[Any], kwargs: dict[str, Any]) -> None:
         agent: Agent = args[0]
         cause = args[1] if len(args) > 1 else kwargs.get("cause")
@@ -804,6 +1010,15 @@ class Interpreter:
             "whisper": lambda a, k: self._bi_whisper(a),
             "remember": lambda a, k: self._bi_remember(a),
             "reflect": lambda a, k: self._bi_reflect(a),
+            "maybe_reflect": lambda a, k: self._bi_maybe_reflect(a, k),
+            "set_persona": lambda a, k: self._bi_set_persona(a),
+            "make_plan": lambda a, k: self._bi_make_plan(a, k),
+            "current_step": lambda a, k: self._bi_current_step(a),
+            "decompose_step": lambda a, k: self._bi_decompose_step(a, k),
+            "current_action": lambda a, k: self._bi_current_action(a),
+            "advance_plan": lambda a, k: self._bi_advance_plan(a),
+            "react": lambda a, k: self._bi_react(a, k),
+            "converse": lambda a, k: self._bi_converse(a, k),
             "alive": lambda a, k: [ag for ag in self.agents if ag.alive],
             "all_agents": lambda a, k: list(self.agents),
             "with_role": lambda a, k: [ag for ag in self.agents if ag.role_name == a[0]],

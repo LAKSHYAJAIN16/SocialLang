@@ -161,6 +161,37 @@ def test_city_sl_runs_a_large_spatial_population_quickly_with_mock_provider():
     assert elapsed < 15.0
 
 
+def test_smallville_sl_runs_to_completion_with_mock_provider():
+    """End-to-end smoke test for the full Generative Agents pipeline (persona,
+    make_plan/decompose_step, react/converse, maybe_reflect) wired together in one
+    game -- see games/smallville.sl and DESIGN.md's "Generative Agents architecture"
+    section. Doesn't assert on mock-generated text content (the mock provider is a
+    random-but-legal baseline, not a coherent narrator -- see providers/mock_provider.py),
+    only that every new builtin fires at least once and the run completes cleanly.
+    """
+    from sociallang.providers.mock_provider import MockProvider
+
+    roster = {f"mock-{i}": (None, MockProvider("mock", None)) for i in range(4)}
+    result = run_source(_load("smallville.sl"), roster, seed=1, max_rounds=15)
+
+    assert result["winner"] == "day_complete"
+    assert len(result["agents"]) == 4
+
+    from sociallang.lang.interpreter import Interpreter, assign_agents
+    from sociallang.lang.parser import parse
+    import random
+
+    sim = parse(_load("smallville.sl"))
+    agents, roles_by_name = assign_agents(sim, roster, random.Random(1))
+    interp = Interpreter(sim, agents, roles_by_name, seed=1)
+    interp.run(max_rounds=15)
+
+    kinds = {e.kind for e in interp.events}
+    assert "plan" in kinds  # make_plan wrote at least one plan to memory
+    assert "dialogue" in kinds  # react() led to at least one converse()
+    assert all(a.persona for a in interp.agents)  # settle_in()'s set_persona ran for everyone
+
+
 def test_generative_memory_pattern_uses_the_configured_embedder():
     from sociallang.providers.embeddings import HashEmbeddingProvider
 

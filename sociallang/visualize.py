@@ -22,6 +22,8 @@ th { color: #9aa0a6; font-weight: 600; }
 .event.whisper { border-left-color: #d29922; background: #1c1a12; }
 .event.note { border-left-color: #8957e5; }
 .event.reflection { border-left-color: #db61a2; }
+.event.plan { border-left-color: #f0883e; }
+.event.dialogue { border-left-color: #56d4dd; }
 .event.ask { display: none; }
 .event.print { border-left-color: #3fb950; }
 .event-meta { color: #9aa0a6; font-size: 0.75rem; margin-bottom: 0.15rem; }
