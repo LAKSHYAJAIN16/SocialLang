@@ -319,7 +319,9 @@ class Interpreter:
     def _agents_snapshot(self) -> list[dict]:
         return [
             {"seat": a.seat, "role": a.role_name, "team": a.team, "model": a.model_key,
-             "alive": a.alive, "death_cause": a.death_cause, "x": a.x, "y": a.y, "location_id": a.location_id}
+             "alive": a.alive, "death_cause": a.death_cause, "x": a.x, "y": a.y, "location_id": a.location_id,
+             "persona": a.persona, "plan": a.plan, "plan_cursor": a.plan_cursor,
+             "subplan": a.subplan, "subplan_cursor": a.subplan_cursor}
             for a in self.agents
         ]
 

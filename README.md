@@ -205,6 +205,19 @@ run them against a mock LLM provider. See [web/README.md](web/README.md) for wha
 different from the real Python implementation (no real API calls, no concurrency,
 no spatial rendering — that's what the CLI and Unity viewer below are for).
 
+## Watch a simulation, not just read its log
+
+`sandbox/` is a dedicated visual simulator, not another code IDE — pick a game
+(`smallville_mafia.sl`/`smallville.sl` lead the picker) and watch it happen on
+a night-sky chart: agents render as points of light that flare with recent
+activity, a conversation draws a fading line between the two agents involved,
+and a reflection surfaces as a newly cataloged star. Reuses the exact JS engine
+`web/index.html` ships (see `sandbox/scripts/sync-engine.mjs`), so it's not a
+separate reimplementation. Ships as both a website (`npm run dev` inside
+`sandbox/`) and a desktop app via Electron (`npm run electron:dist`). See
+[sandbox/README.md](sandbox/README.md) and the repo's `PRODUCT.md` for the
+full brief.
+
 ## Setup
 
 ```

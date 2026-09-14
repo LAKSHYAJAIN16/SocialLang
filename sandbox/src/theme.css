@@ -1,0 +1,149 @@
+/* ============================================================================
+   Night-Sky Chart -- the committed visual world for the Smallville Sandbox.
+   The town rendered as a star atlas: agents are points of light that flare
+   with recent activity, locations are faint constellation anchors, and a
+   conversation draws a line between two agents that lingers and fades like a
+   small discovered constellation. Dark is the natural home (a chart read at
+   night); light is a "daytime observatory" variant, not an inverted default --
+   ink stars on parchment rather than white text on a lighter gray.
+============================================================================ */
+
+:root {
+  color-scheme: light;
+
+  --slc-bg: #f3efe4;
+  --slc-bg-elevated: #ece4d1;
+  --slc-bg-panel: #ede7d8;
+  --slc-grid: rgba(27, 36, 56, 0.08);
+  --slc-star: #16223f;
+  --slc-star-dim: rgba(22, 34, 63, 0.38);
+  --slc-constellation: rgba(22, 34, 63, 0.22);
+  --slc-accent: #a4600f;
+  --slc-accent-soft: rgba(164, 96, 15, 0.16);
+  --slc-accent-strong: #7a4708;
+  --slc-text: #1b2438;
+  --slc-text-dim: #6b5f4a;
+  --slc-danger: #8c3348;
+  --slc-danger-soft: rgba(140, 51, 72, 0.14);
+  --slc-border: rgba(22, 34, 63, 0.14);
+  --slc-shadow: rgba(22, 34, 63, 0.16);
+
+  --slc-font-display: "Newsreader", Georgia, "Times New Roman", serif;
+  --slc-font-body: "Inter", -apple-system, "Segoe UI", sans-serif;
+  --slc-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+
+  font-family: var(--slc-font-body);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --slc-bg: #05070d;
+    --slc-bg-elevated: #0a0f1c;
+    --slc-bg-panel: #0c1120;
+    --slc-grid: rgba(233, 231, 222, 0.06);
+    --slc-star: #f4f1e6;
+    --slc-star-dim: rgba(244, 241, 230, 0.32);
+    --slc-constellation: rgba(244, 241, 230, 0.16);
+    --slc-accent: #e8a33d;
+    --slc-accent-soft: rgba(232, 163, 61, 0.16);
+    --slc-accent-strong: #ffc773;
+    --slc-text: #e9e7de;
+    --slc-text-dim: #8d93ab;
+    --slc-danger: #e08095;
+    --slc-danger-soft: rgba(224, 128, 149, 0.14);
+    --slc-border: rgba(233, 231, 222, 0.12);
+    --slc-shadow: rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --slc-bg: #05070d;
+  --slc-bg-elevated: #0a0f1c;
+  --slc-bg-panel: #0c1120;
+  --slc-grid: rgba(233, 231, 222, 0.06);
+  --slc-star: #f4f1e6;
+  --slc-star-dim: rgba(244, 241, 230, 0.32);
+  --slc-constellation: rgba(244, 241, 230, 0.16);
+  --slc-accent: #e8a33d;
+  --slc-accent-soft: rgba(232, 163, 61, 0.16);
+  --slc-accent-strong: #ffc773;
+  --slc-text: #e9e7de;
+  --slc-text-dim: #8d93ab;
+  --slc-danger: #e08095;
+  --slc-danger-soft: rgba(224, 128, 149, 0.14);
+  --slc-border: rgba(233, 231, 222, 0.12);
+  --slc-shadow: rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--slc-bg);
+  color: var(--slc-text);
+  font-family: var(--slc-font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--slc-accent);
+  color: var(--slc-bg);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--slc-border);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--slc-text-dim);
+  background-clip: padding-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--slc-accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+button,
+select,
+input,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Tabular figures wherever numbers line up in a column (round counters, seat
+   counts, stats) -- craft-floor's "numerals in tabular data ship with browser
+   defaults that belong to no design system" note. */
+.slc-tabular {
+  font-variant-numeric: tabular-nums;
+}

@@ -989,7 +989,20 @@ class Interpreter {
     };
   }
 
-  _agentsSnapshot() { return this.agents.map((a) => ({ seat: a.seat, role: a.roleName, team: a.team, model: a.modelKey, alive: a.alive, deathCause: a.deathCause, x: a.x, y: a.y, locationId: a.locationId })); }
+  // plan entries are Maps (see evalExpr's DictLit case) since that's how every
+  // in-language dict literal is represented -- converted to plain objects here
+  // so a snapshot is always ordinary JSON-shaped data for any consumer (this
+  // sandbox included), not a mix of Maps and objects depending on how deep you
+  // look.
+  _agentsSnapshot() {
+    return this.agents.map((a) => ({
+      seat: a.seat, role: a.roleName, team: a.team, model: a.modelKey,
+      alive: a.alive, deathCause: a.deathCause, x: a.x, y: a.y, locationId: a.locationId,
+      persona: a.persona, subplan: a.subplan.slice(), subplanCursor: a.subplanCursor,
+      plan: a.plan.map((step) => (step instanceof Map ? Object.fromEntries(step) : step)),
+      planCursor: a.planCursor,
+    }));
+  }
   _worldSnapshot() { return Array.from(this.worldLocations.values()).map((loc) => ({ id: loc.id, type: loc.typeName, tag: loc.tag, capacity: loc.capacity, x: loc.x, y: loc.y })); }
   getAgentsSnapshot() { return this._agentsSnapshot(); }
   getWorldSnapshot() { return this.world ? { width: this.world.width, height: this.world.height, locations: this._worldSnapshot() } : null; }

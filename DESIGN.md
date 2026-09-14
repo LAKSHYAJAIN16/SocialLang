@@ -379,6 +379,17 @@ hold API keys), and a tutorial panel. It's a full reimplementation, not a thin
 wrapper around the Python code, so a future language change needs to be ported
 there by hand too; see `web/README.md`.
 
+`sandbox/` is a separate React+TypeScript surface built on top of that same
+JS engine (extracted into an importable module by `sandbox/scripts/sync-engine.mjs`,
+not reimplemented a third time) -- a dedicated visual simulator rather than a
+code IDE, so watching `smallville.sl`/`smallville_mafia.sl` (or any other
+example game, or pasted custom source) doesn't require reading a text log:
+agents render as points of light on a night-sky chart, brightening with
+recent activity and dimming when idle, with fading lines for `converse()`
+exchanges. Ships as both a website (`npm run dev`/`build`) and a desktop app
+via Electron (`npm run electron:dist`, an NSIS installer verified on Windows
+in this pass). See `sandbox/README.md` and the repo's `PRODUCT.md`.
+
 **Not implemented / open questions:**
 
 - No static type checking or line-number-aware error recovery beyond "first parse error
