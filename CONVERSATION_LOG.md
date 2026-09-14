@@ -5,6 +5,65 @@ shipped, and why. Newest entry on top.
 
 ---
 
+## 2026-09-13 (third entry, same day)
+
+**Asked:** "is there a sandbox that I can utilize to test this out? use
+/impeccable to make the UI. and it should be a website and a desktop app."
+
+**Shipped:** `sandbox/` — a new React+TypeScript app, not another code IDE:
+a dedicated visual simulator. Went through /impeccable's actual direction
+process (product interview -> PRODUCT.md; seven candidate visual worlds
+derived from the audience's own culture, weighed against the skill's
+catalog challengers via `concept-seed.mjs`; the assigned pick lost outright
+to a fused catalog challenger — "star atlas chart" — on both axes, so that's
+what got built, presented to the user as a real choice with three ASCII-
+preview alternates rather than just building my own favorite). Direction:
+**Night-Sky Chart** — the town as a star atlas, agents as points of light
+that flare with recent activity, `converse()` exchanges as fading
+constellation lines, reflections as newly cataloged stars.
+
+Reuses `web/index.html`'s exact JS engine (extracted into an ES module by
+`sandbox/scripts/sync-engine.mjs`) rather than a third reimplementation.
+Building the agent catalog card surfaced a real pre-existing gap: neither
+engine's agent-snapshot function actually exposed persona/plan/cursor
+fields, even though the builtins that write them existed — fixed on both
+the Python and JS sides (`sociallang/lang/interpreter.py`, `web/index.html`),
+75 Python tests still green.
+
+Verified live in a real Chrome tab (not just build-succeeded): both themes,
+agent selection/persona/plan display, log filters, custom-source paste, all
+seven games. Found and fixed two real bugs this way: the canvas going stale
+on theme toggle (a React effect-ordering race, not just "add a dependency"
+— fixed by applying the theme attribute eagerly/synchronously rather than
+from a childward-flushing effect), and city.sl's 425 locations turning into
+unreadable label soup (fixed with a per-type label-density threshold). Ran
+the design skill's mechanical detector (degraded mode, still useful) plus a
+manual craft-floor pass, which caught a real violation (a 2px colored
+`border-left` marking an agent's current plan step) and fixed it with a dot
+marker instead; added one authored motion (the winner badge's entrance).
+
+**Left incomplete, disclosed rather than glossed over:** the desktop app
+(Electron) is fully wired — `electron/main.js`, electron-builder config,
+generated `.ico`/`.png` icons, `npm run electron:dev`/`electron:dist` — but
+the actual installer build could not be completed *in this session*.
+Extracting Electron's own distribution into `release/` hits a persistent
+EPERM renaming the extraction directory; a temporary (uncommitted) retry
+patch in `node_modules` proved the lock holds for the entire packaging
+process's lifetime, not a few seconds like a normal antivirus scan, and a
+separate background dev-server process was independently killed by the
+harness for low memory during the same stretch — both point to this
+sandboxed environment's resources, not the app or its config. The desktop
+app is otherwise ready to build on a normal machine or in CI.
+
+**Also fixed:** `resize_window`/browser-automation screenshots turned out to
+be unreliable in this session (stuck at a fixed viewport regardless of the
+requested size) — disclosed to the user rather than faked; mobile-width
+verification is implemented (a tested `@media (max-width: 720px)` block,
+same pattern as `web/index.html`'s) but not screenshot-confirmed this
+session.
+
+---
+
 ## 2026-09-13 (follow-up, same day)
 
 **Asked:** correction on the prior entry below — the ask wasn't "add Generative
