@@ -18,7 +18,7 @@ const icoPath = join(root, "build", "icon.ico");
 
 await sharp(svgPath).resize(256, 256).png().toFile(tmpPngPath);
 await writeFile(pngPath, await sharp(tmpPngPath).toBuffer());
-const ico = await pngToIco.default(tmpPngPath);
+const ico = await pngToIco(tmpPngPath);
 await writeFile(icoPath, ico);
 await unlink(tmpPngPath);
 
