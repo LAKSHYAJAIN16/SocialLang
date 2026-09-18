@@ -2,7 +2,7 @@
 
 > A domain-specific language for LLM-agent social games -- Mafia, trust games, whatever -- so you never rewrite the scaffolding again.
 
-I kept wanting to try new social games with LLM agents and kept rewriting the same Python scaffolding every time, so I built an actual language for it: its own lexer, parser, and tree-walking interpreter. A `.sl` file declares a population, the roles they hold, the phases the game moves through, and each phase's rules as real code -- variables, loops, conditionals, functions. No host language needed for a new game, just a `.sl` file. It also handles spatial worlds, scales to thousands of agents, and can stream a run live into a Unity viewer. Built on [MafiaSim](https://github.com/LAKSHYAJAIN16/LLM-mafia)'s LLM provider layer.
+It's a tree-walking interpreter for a small language whose whole job is describing LLM-agent social games -- Mafia, trust games, whatever comes next -- without rewriting Python scaffolding for each one. A `.sl` file declares a population, the roles they hold, the phases the game moves through, and each phase's rules as real code: variables, loops, conditionals, functions. No host language needed for a new game, just a `.sl` file. It also handles spatial worlds, scales to thousands of agents, and can stream a run live into a Unity viewer. Built on [MafiaSim](https://github.com/LAKSHYAJAIN16/LLM-mafia)'s LLM provider layer.
 
 ## A complete example
 
@@ -60,58 +60,11 @@ sim TrustGame {
 
 ## Language basics
 
-A program is one `sim <Name> { ... }` block:
-- `agents: <n>` or `<lo>..<hi>` -- population size
-- `role <Name> { team, memory: <pattern>, sees: teammates|none, count: <n>|remainder }` -- a seat kind; at most one role can use `count: remainder`
-- `world { width, height, location <Type> { tag, capacity, count } ... }` -- optional, procedurally scatters that many locations across a grid (seeded, reproducible under `--seed`); agents get `x`/`y`/`location` via `spawn_agents_at`/`move_to`
-- `memory <name>(<params>) { ... }` -- a custom memory pattern, itself SocialLang
-- `fn`, `phase`, `win_condition { ... }` (checked via `check_win()`), `loop { ... }` (the main loop, `run <phase>` invokes a phase)
+A program is one `sim <Name> { ... }` block: `agents` sets the population, `role` blocks define seat kinds (team, memory pattern, visibility, how many), an optional `world` block scatters spatial locations, and `phase`/`fn`/`win_condition`/`loop` are the actual game logic in ordinary imperative syntax (`if`, `while`, `for`, functions, lists, dicts). Roster assignment lives outside the language on purpose -- a `sim` describes shape, not which model fills which seat; `sociallang run` loads `config/models.yaml` and assigns one model per anonymized seat (`P1`, `P2`, ...).
 
-Statements: `let`, assignment, `if`/`else if`/`else`, `while`, `for x in <expr>`, `return`, `break`, `run <phase>`. Expressions: numbers, strings, booleans, lists/dicts, `and`/`or`/`not`, comparisons, arithmetic, `.attr`, `[index]`, positional/keyword calls.
+Three memory patterns ship built in (`full_history`, `recent(n)`, and `generative(k)` -- Park et al. 2023 memory-stream retrieval), plus `reflect`/`maybe_reflect` for synthesizing higher-level insights back into memory. Built-in functions cover asking agents things (`ask`, `ask_choice`, and bulk `ask_all`/`ask_choice_all` for scale), publishing events (`broadcast`, `whisper`), querying and moving agents (`alive`, `eliminate`, spatial placement), and running the win condition. `games/smallville.sl` implements the full Park et al. 2023 Generative Agents architecture (persona, planning, reacting, dialogue, reflection) on top of the same builtins, and `games/smallville_mafia.sl` layers Mafia on top of that. Scaling to thousands of agents needs no special syntax -- `role { count: 5000 }` plus ordinary `fn` calls does it; `games/city.sl` runs a full game with 5,050 agents in about a second.
 
-Roster assignment lives outside the language on purpose -- a `sim` describes shape, not which model fills which seat. `sociallang run` loads `config/models.yaml` and assigns one model per anonymized seat (`P1`, `P2`, ...).
-
-### Memory patterns
-
-| Pattern | Behavior |
-|---|---|
-| `full_history` | Every visible event, unfiltered |
-| `recent(n)` | Last `n` visible events |
-| `generative(k)` | Top-`k` by recency + importance + relevance (Park et al. 2023 memory-stream retrieval); real embeddings/LLM-importance via `--embeddings`/`--llm-importance` |
-
-`reflect(agent)` synthesizes higher-level insights from memory and writes them back as high-importance memories; `maybe_reflect(agent, threshold=)` fires only once accumulated importance crosses `threshold`.
-
-### Generative Agents, implemented on top of this
-
-`games/smallville.sl` runs the full Park et al. 2023 architecture (persona, planning, reacting, dialogue, reflection); `games/smallville_mafia.sl` layers Mafia's hidden roles and votes on top of the same living town. See [DESIGN.md](DESIGN.md) for the paper mapping.
-
-| Mechanism | Builtin(s) |
-|---|---|
-| Persona | `set_persona(agent, text)` |
-| Planning | `make_plan(agent, goal, steps=)`, `decompose_step(agent, step=, chunks=)`, `current_step`/`current_action`/`advance_plan` |
-| Reacting | `react(agent, observation)` -- `null` to continue, or a new action |
-| Dialogue | `converse(agent_a, agent_b, topic=, max_turns=)` -- real multi-turn exchange between the two agents' own models |
-
-### Built-in functions
-
-| Function | Does |
-|---|---|
-| `ask(agent, prompt, ...)` / `ask_choice(agent, prompt, options)` | Calls the agent's model, free text or constrained to one option |
-| `ask_all(...)` / `ask_choice_all(...)` | Bulk versions, fired concurrently -- how a game scales past a handful of agents |
-| `broadcast(text)` / `whisper(agents, text)` | Publish an event to everyone / to just the given agents |
-| `remember(agent, text)` | Adds a private memory |
-| `alive()` / `all_agents()` / `with_role(name)` / `team_of(agent)` | Query agents |
-| `eliminate(agent, cause=)` | Marks an agent dead and broadcasts it |
-| `tally(votes)` | Majority target from a dict of agent to target |
-| `locations()` / `locations_by_tag(tag)` / `spawn_agents_at()` / `move_to()` / `location_of()` / `agents_at()` / `nearby()` | Spatial world queries and placement |
-| `count`, `last`, `random_choice`, `str`, `print` | Utility |
-| `check_win()` | Runs `win_condition`, returns its result or `null` |
-
-### Scaling without new syntax
-
-No special "scripted vs. LLM" mode -- `role { count: 5000 }` plus ordinary `fn` calls handles it. `games/city.sl` and `games/outbreak.sl` move most agents with plain functions and only ask a small role something via `ask_choice_all` each round; all 5,050 agents in `city.sl` run a full game in about a second.
-
-Full grammar and design rationale: [DESIGN.md](DESIGN.md).
+Full grammar, the complete built-in function reference, and design rationale live in [DESIGN.md](DESIGN.md).
 
 ## Other ways to run it
 
