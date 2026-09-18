@@ -427,3 +427,9 @@ in this pass). See `sandbox/README.md` and the repo's `PRODUCT.md`.
   `converse()` turn already goes through the normal memory-retrieval path via
   `_prompt_pieces`/`buildContextFor` — just without a dedicated "what's relevant to
   this specific reply" re-query on top of that.
+- No visual scripting -- authoring a `.sl` game is still text-only (`.sl` source,
+  hand-written or pasted into the sandbox/web editor). `sandbox/` visualizes a game
+  *running*, it doesn't help build one. A node-based editor for phases/roles/rules
+  (blocks for `ask_choice`, `broadcast`, `if`/`for`, wired together and compiled to or
+  backed by the same AST the parser produces) is a plausible future surface, not
+  started -- flagged here as a later idea, not scoped.
