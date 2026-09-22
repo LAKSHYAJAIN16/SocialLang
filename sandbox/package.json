@@ -2,8 +2,8 @@
   "name": "sandbox",
   "private": true,
   "version": "0.1.0",
-  "description": "Smallville Sandbox -- a night-sky visual simulator for SocialLang",
-  "author": "SocialLang",
+  "description": "SocialSandbox -- a night-sky visual simulator for SocialLang",
+  "author": "SocialSandbox",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -41,9 +41,9 @@
     "wait-on": "^9.1.0"
   },
   "build": {
-    "appId": "dev.lakshyajain.sociallang-sandbox",
-    "productName": "Smallville Sandbox",
-    "copyright": "SocialLang",
+    "appId": "dev.lakshyajain.socialsandbox",
+    "productName": "SocialSandbox",
+    "copyright": "SocialSandbox",
     "files": [
       "dist/**/*",
       "electron/**/*",

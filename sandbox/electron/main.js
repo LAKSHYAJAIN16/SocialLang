@@ -19,7 +19,7 @@ function createWindow() {
     // chrome flashing white before the page paints reads as a bug, not a
     // loading state.
     backgroundColor: "#05070d",
-    title: "Smallville Sandbox",
+    title: "SocialSandbox",
     icon: join(__dirname, "..", "build", "icon.png"),
     autoHideMenuBar: true,
     webPreferences: {

@@ -25,7 +25,7 @@ export function Header({
   return (
     <header className="app-header">
       <div className="app-header__brand">
-        <span className="app-header__wordmark">SOCIALLANG</span>
+        <span className="app-header__wordmark">SOCIALSANDBOX</span>
         <span className="app-header__tagline">a night-sky sandbox for watched simulations</span>
       </div>
 
