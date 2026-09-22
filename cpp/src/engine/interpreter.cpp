@@ -7,6 +7,7 @@
 
 #include "engine/builtins.h"
 #include "engine/memory.h"
+#include "engine/parallel.h"
 
 namespace sl {
 
@@ -123,12 +124,13 @@ thread_local int gCallDepth = 0;
 // ---- Setup: seat assignment and world scatter.
 
 Interpreter::Interpreter(std::shared_ptr<const Program> program, const std::vector<RosterEntry>& roster,
-                         uint32_t seed, LogSink sink, int maxConcurrency)
+                         uint32_t seed, LogSink sink, InterpreterOptions options)
     : program_(std::move(program)),
       syms_(program_->syms),
       rng_(seed),
       sink_(std::move(sink)),
-      maxConcurrency_(std::max(1, maxConcurrency)) {
+      opts_(options) {
+  opts_.maxConcurrency = std::max(1, opts_.maxConcurrency);
   const Program& p = *program_;
   SeededRandom assignRng(seed);
 
@@ -602,6 +604,13 @@ std::string Interpreter::renderEvent(int idx) const {
   return e.author.empty() ? e.text : "[" + e.author + "] " + e.text;
 }
 
+bool Interpreter::usesScriptedMemory(const RoleDecl& role) const {
+  if (role.memoryName.empty()) return false;
+  for (auto& decl : program_->memoryDecls)
+    if (decl.name == role.memoryName) return true;
+  return false;
+}
+
 std::vector<int> Interpreter::callMemory(const RoleDecl& role, const std::vector<int>& visible,
                                          const std::string& query) {
   std::vector<Value> args;
@@ -624,6 +633,11 @@ std::vector<int> Interpreter::callMemory(const RoleDecl& role, const std::vector
     }
     return visible;
   }
+  return nativeMemory(role, args, visible, query);
+}
+
+std::vector<int> Interpreter::nativeMemory(const RoleDecl& role, const std::vector<Value>& args,
+                                           const std::vector<int>& visible, const std::string& query) const {
   if (role.memoryName == "full_history") return visible;
   if (role.memoryName == "recent") {
     int n = !args.empty() && args[0].t == VT::Num ? static_cast<int>(args[0].n) : 10;
@@ -642,10 +656,12 @@ std::vector<int> Interpreter::callMemory(const RoleDecl& role, const std::vector
                      role.memoryName + "(...) { }` declared)");
 }
 
-std::string Interpreter::buildContext(int agent, const std::string& query) {
+std::string Interpreter::buildContext(int agent, const std::string& query, const std::vector<Value>* memoryArgs) {
   const RoleDecl& role = program_->roles[agents_[agent].roleIdx];
   std::vector<int> visible = visibleEventsFor(agent);
-  std::vector<int> selected = role.memoryName.empty() ? visible : callMemory(role, visible, query);
+  std::vector<int> selected = role.memoryName.empty() ? visible
+                              : memoryArgs            ? nativeMemory(role, *memoryArgs, visible, query)
+                                                      : callMemory(role, visible, query);
   if (selected.empty()) return "(nothing has happened yet)";
   std::string out;
   for (size_t i = 0; i < selected.size(); ++i) {
@@ -655,7 +671,7 @@ std::string Interpreter::buildContext(int agent, const std::string& query) {
   return out;
 }
 
-std::string Interpreter::identityFor(int agent) {
+std::string Interpreter::identityFor(int agent) const {
   const Agent& a = agents_[agent];
   const RoleDecl& role = program_->roles[a.roleIdx];
   std::string id = "You are " + a.seat + ". Your role is " + role.name + " (" + role.team + " team).";
@@ -671,16 +687,46 @@ std::string Interpreter::identityFor(int agent) {
 
 // ---- Provider calls
 
-CompletionRequest Interpreter::makeRequest(int agent, const std::string& prompt, double temperature, int maxTokens) {
+CompletionRequest Interpreter::makeRequest(int agent, const std::string& prompt, double temperature, int maxTokens,
+                                           const std::vector<Value>* memoryArgs) {
   CompletionRequest req;
   req.system = identityFor(agent);
   req.temperature = temperature;
   req.maxTokens = maxTokens;
   if (agents_[agent].provider->wantsContext())
-    req.user = "What has happened so far:\n" + buildContext(agent, prompt) + "\n\nNow: " + prompt;
+    req.user = "What has happened so far:\n" + buildContext(agent, prompt, memoryArgs) + "\n\nNow: " + prompt;
   else
     req.user = "Now: " + prompt;
   return req;
+}
+
+// Bulk asks: every agent's context is an independent read of the event
+// table, so they're built data-parallel on the worker pool. Scripted memory
+// patterns (a `memory name { ... }` block) execute interpreter code and stay
+// on the serial path, as does everything when options.parallelContext is off.
+std::vector<CompletionRequest> Interpreter::makeRequests(const std::vector<int>& list, const std::string& prompt,
+                                                         double temperature, int maxTokens) {
+  std::vector<CompletionRequest> reqs(list.size());
+  bool parallel = opts_.parallelContext && list.size() > 1;
+  bool anyContext = false;
+  for (int a : list) {
+    anyContext = anyContext || agents_[a].provider->wantsContext();
+    if (usesScriptedMemory(program_->roles[agents_[a].roleIdx])) parallel = false;
+  }
+  if (!parallel || !anyContext) {
+    for (size_t i = 0; i < list.size(); ++i) reqs[i] = makeRequest(list[i], prompt, temperature, maxTokens);
+    return reqs;
+  }
+  // Memory-pattern arguments (`recent(10)`) are evaluated once per role, up
+  // front, so the parallel region only reads.
+  std::vector<std::vector<Value>> roleArgs(program_->roles.size());
+  for (size_t r = 0; r < program_->roles.size(); ++r)
+    for (auto& e : program_->roles[r].memoryArgs) roleArgs[r].push_back(eval(*e, *global_));
+  ThreadPool::shared().parallelFor(list.size(), [&](size_t i) {
+    int a = list[i];
+    reqs[i] = makeRequest(a, prompt, temperature, maxTokens, &roleArgs[agents_[a].roleIdx]);
+  });
+  return reqs;
 }
 
 std::string Interpreter::runCompletion(int agent, const CompletionRequest& req) {
@@ -714,7 +760,7 @@ std::vector<std::string> Interpreter::runCompletions(const std::vector<int>& age
         results[i] = agents_[agentIdx[i]].provider->complete(reqs[i]);
       }
     };
-    size_t n = std::min<size_t>(static_cast<size_t>(maxConcurrency_), reqs.size());
+    size_t n = std::min<size_t>(static_cast<size_t>(opts_.maxConcurrency), reqs.size());
     std::vector<std::thread> pool;
     for (size_t t = 0; t < n; ++t) pool.emplace_back(worker);
     for (auto& t : pool) t.join();
@@ -875,10 +921,7 @@ Value Interpreter::callBuiltin(int id, std::vector<Value>& args, const Kwargs& k
     return prompt + "\n\nRespond with exactly one of: " + join(labels, ", ");
   };
   auto doAskAll = [&](const std::vector<int>& list, const std::string& prompt) {
-    std::vector<CompletionRequest> reqs;
-    reqs.reserve(list.size());
-    for (int a : list) reqs.push_back(makeRequest(a, prompt, temperature, maxTokens));
-    auto texts = runCompletions(list, reqs);
+    auto texts = runCompletions(list, makeRequests(list, prompt, temperature, maxTokens));
     for (size_t i = 0; i < list.size(); ++i)
       appendEvent(LogKind::Ask, "(asked: " + prompt + ") " + texts[i], agents_[list[i]].seat, {list[i]});
     return texts;

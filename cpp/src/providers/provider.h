@@ -49,12 +49,18 @@ class Provider {
 // reference's mock_provider.py, but seeded so a run is reproducible.
 class MockProvider : public Provider {
  public:
-  explicit MockProvider(uint32_t seed) : rng_(seed ^ 0x5bd1e995u) { label = "Mock"; }
+  // readsContext = true makes the mock request full memory contexts like a
+  // real provider would -- for benchmarking prompt construction offline.
+  explicit MockProvider(uint32_t seed, bool readsContext = false)
+      : readsContext_(readsContext), rng_(seed ^ 0x5bd1e995u) {
+    label = "Mock";
+  }
   CompletionResult complete(const CompletionRequest& req) override;
-  bool wantsContext() const override { return false; }
+  bool wantsContext() const override { return readsContext_; }
   bool isRemote() const override { return false; }
 
  private:
+  bool readsContext_;
   std::mutex mu_;
   SeededRandom rng_;
 };

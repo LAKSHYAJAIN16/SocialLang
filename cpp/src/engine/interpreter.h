@@ -76,6 +76,13 @@ struct RosterEntry {
   std::shared_ptr<Provider> provider;
 };
 
+struct InterpreterOptions {
+  int maxConcurrency = 8;  // in-flight provider calls for ask_all / ask_choice_all
+  // Build bulk asks' memory contexts on the shared worker pool. Off = the
+  // serial reference path, for checking the parallel one changes nothing.
+  bool parallelContext = true;
+};
+
 struct RunStats {
   std::atomic<long long> calls{0}, promptTokens{0}, completionTokens{0}, errors{0};
 };
@@ -87,7 +94,7 @@ class Interpreter {
   // Assigns roles and models to seats and scatters the world, exactly like
   // run_source(): two independently seeded RNGs from the same seed.
   Interpreter(std::shared_ptr<const Program> program, const std::vector<RosterEntry>& roster, uint32_t seed,
-              LogSink sink, int maxConcurrency = 8);
+              LogSink sink, InterpreterOptions options = {});
   ~Interpreter();
 
   struct StepResult {
@@ -125,7 +132,7 @@ class Interpreter {
   int round_ = 0;
   SeededRandom rng_;
   LogSink sink_;
-  int maxConcurrency_;
+  InterpreterOptions opts_;
   Value returnValue_;
   std::unique_ptr<Env> global_;
   Value kTimeKey_ = Value::str("time"), kActivityKey_ = Value::str("activity");
@@ -149,13 +156,21 @@ class Interpreter {
   void emit(LogEntry entry);
   std::vector<int> visibleEventsFor(int agent) const;
   std::vector<int> callMemory(const RoleDecl& role, const std::vector<int>& visible, const std::string& query);
-  std::string buildContext(int agent, const std::string& query);
-  std::string identityFor(int agent);
+  // The native memory patterns (full_history / recent / generative): pure
+  // reads of the event table, safe to run for many agents concurrently.
+  std::vector<int> nativeMemory(const RoleDecl& role, const std::vector<Value>& args, const std::vector<int>& visible,
+                                const std::string& query) const;
+  bool usesScriptedMemory(const RoleDecl& role) const;
+  std::string buildContext(int agent, const std::string& query, const std::vector<Value>* memoryArgs = nullptr);
+  std::string identityFor(int agent) const;
   std::string renderEvent(int idx) const;
 
   // Provider calls. `prompt` is the "Now: ..." instruction; the full user
   // prompt (history + prompt) is only assembled if the provider reads it.
-  CompletionRequest makeRequest(int agent, const std::string& prompt, double temperature, int maxTokens);
+  CompletionRequest makeRequest(int agent, const std::string& prompt, double temperature, int maxTokens,
+                                const std::vector<Value>* memoryArgs = nullptr);
+  std::vector<CompletionRequest> makeRequests(const std::vector<int>& agents, const std::string& prompt,
+                                              double temperature, int maxTokens);
   std::string runCompletion(int agent, const CompletionRequest& req);
   std::vector<std::string> runCompletions(const std::vector<int>& agents, const std::vector<CompletionRequest>& reqs);
 
