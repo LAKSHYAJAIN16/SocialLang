@@ -70,6 +70,7 @@ Full grammar, the complete built-in function reference, and design rationale liv
 
 - **Browser, no install**: `web/index.html` is a self-contained IDE (lexer/parser/interpreter ported to JS), runs all seven example games against a mock provider client-side. See [web/README.md](web/README.md).
 - **SocialSandbox**: `sandbox/` renders a run as a night-sky chart -- agents flare with activity, conversations draw fading lines, reflections become new stars. Ships as a website (`npm run dev`) or Electron app (`npm run electron:dist`); reuses the same JS engine as the web IDE. See [sandbox/README.md](sandbox/README.md).
+- **SocialSandbox (native, `cpp/`)**: a C++ rewrite of the sandbox laid out like the Unity editor (Hierarchy, Scene, Inspector, Project, Console; Play/Pause/Step), with a native interpreter up to ~100x faster than the JS one on the mock, CPU-parallel bulk asks, and real models via your own API keys or a local LLM (Ollama, LM Studio). See [cpp/README.md](cpp/README.md).
 - **Unity, live**: `python -m sociallang.cli run games/village.sl --mock-only --live` streams events over a local WebSocket (`sociallang/engine/live.py`); `unity/SocialLangViewer` renders agents/locations on a 2D map or replays a saved `results/*.json`. See [unity/README.md](unity/README.md).
 
 ## Setup

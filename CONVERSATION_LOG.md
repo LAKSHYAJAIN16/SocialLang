@@ -5,6 +5,42 @@ shipped, and why. Newest entry on top.
 
 ---
 
+## 2026-09-22
+
+**Asked:** why the desktop app opened blank, rename it SocialSandbox, then
+"run /impeccable on the UI... it should kind of be like Unity", change the
+logo to an "S", and "code the app in C++... make another branch" because
+Electron/Python overhead makes large simulations too expensive. Also: users
+bring their own API keys or use local LLMs; "is there any way to do
+parallelism?" (with a pointer to Stanford CS149).
+
+**Shipped (main):** the blank window was Vite's absolute `/assets/` paths under
+`file://`; fixed with `base: './'`. Renamed the app to SocialSandbox.
+
+**Shipped (branch `cpp-app`, `cpp/`):**
+- A native port of the interpreter (`src/engine/`): same grammar and builtins,
+  but index-based values, interned symbols, link-time call resolution,
+  return codes instead of exceptions, and lazily built memory contexts.
+  Mock-provider runs are 100x+ faster than the JS engine on Smallville.
+- LLM providers over WinHTTP (Anthropic, OpenAI, Gemini, xAI, OpenRouter,
+  local OpenAI-compatible) with DPAPI-encrypted keys.
+- Parallelism, measured: parallel context building for bulk asks (3.8x on
+  `bench/bulk_memory.sl`, byte-identical to the serial path) and parallel
+  independent runs in `sl_run` (3.6x on 8 threads for smallville_mafia).
+  City's parallel-run scaling stalls at ~2.7x; heap contention suspected,
+  not yet profiled.
+- A Unity-style editor (Dear ImGui docking + D3D11): Hierarchy, Scene,
+  Inspector, Project, Console, script tabs, Play/Pause/Step with Unity
+  semantics, dark and light skins, Model Settings. The sim runs on a worker
+  thread, so the UI holds 60 fps.
+
+**Left alone:** the user's `simulacra_efficiency_project_brief.pdf` (an
+event-driven, GPU-batched runtime brief) is untracked and unimplemented; its
+principles (measure first, keep a reference path, switchable optimizations)
+shaped the parallel work. The Electron `sandbox/` still exists on the branch.
+
+---
+
 ## 2026-09-13 (third entry, same day)
 
 **Asked:** "is there a sandbox that I can utilize to test this out? use
