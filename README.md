@@ -69,7 +69,7 @@ Full grammar, the complete built-in function reference, and design rationale liv
 ## Other ways to run it
 
 - **Browser, no install**: `web/index.html` is a self-contained IDE (lexer/parser/interpreter ported to JS), runs all seven example games against a mock provider client-side. See [web/README.md](web/README.md).
-- **Visual sandbox**: `sandbox/` renders a run as a night-sky chart -- agents flare with activity, conversations draw fading lines, reflections become new stars. Ships as a website (`npm run dev`) or Electron app (`npm run electron:dist`); reuses the same JS engine as the web IDE. See [sandbox/README.md](sandbox/README.md).
+- **SocialSandbox**: `sandbox/` renders a run as a night-sky chart -- agents flare with activity, conversations draw fading lines, reflections become new stars. Ships as a website (`npm run dev`) or Electron app (`npm run electron:dist`); reuses the same JS engine as the web IDE. See [sandbox/README.md](sandbox/README.md).
 - **Unity, live**: `python -m sociallang.cli run games/village.sl --mock-only --live` streams events over a local WebSocket (`sociallang/engine/live.py`); `unity/SocialLangViewer` renders agents/locations on a 2D map or replays a saved `results/*.json`. See [unity/README.md](unity/README.md).
 
 ## Setup

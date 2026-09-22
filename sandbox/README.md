@@ -1,4 +1,4 @@
-# Smallville Sandbox
+# SocialSandbox
 
 A dedicated visual simulator for SocialLang, built as a website and (via
 Electron) a desktop app — not another code IDE. Pick a game, hit Run, and
