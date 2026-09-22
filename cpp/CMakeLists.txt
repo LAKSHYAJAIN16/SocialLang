@@ -32,6 +32,11 @@ target_link_libraries(sl_engine PUBLIC winhttp crypt32)
 add_executable(sl_run src/cli/main.cpp)
 target_link_libraries(sl_run PRIVATE sl_engine)
 
+option(SL_BUILD_APP "Build the SocialSandbox editor (needs Windows + DirectX 11)" ON)
+if(NOT SL_BUILD_APP)
+  return()
+endif()
+
 # ---- The editor app.
 set(IMGUI_DIR third_party/imgui)
 add_executable(SocialSandbox WIN32

@@ -1,6 +1,5 @@
 @echo off
-rem Builds SocialSandbox.exe and sl_run.exe into cpp\build\ with MSVC + Ninja,
-rem using the native toolchain for this machine (arm64 or x64).
+rem Engine + headless runner only (no editor) -- quick iteration on the interpreter.
 setlocal enabledelayedexpansion
 rem vswhere is invoked by explicit path: this shell may not search the
 rem current directory for executables (NoDefaultCurrentDirectoryInExePath).
@@ -11,6 +10,5 @@ set "ARCH=x64"
 if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "ARCH=arm64"
 call "!VSDIR!\VC\Auxiliary\Build\vcvarsall.bat" %ARCH% >nul || exit /b 1
 cd /d "%~dp0"
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release || exit /b 1
-cmake --build build || exit /b 1
-echo Built build\SocialSandbox.exe and build\sl_run.exe
+cmake -S . -B build-engine -G Ninja -DCMAKE_BUILD_TYPE=Release -DSL_BUILD_APP=OFF || exit /b 1
+cmake --build build-engine || exit /b 1
