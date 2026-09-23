@@ -10,14 +10,31 @@
 namespace app {
 
 void drawProject(EditorState& ed) {
-  if (!beginPanel("Project", &ed.showProject)) {
+  if (!beginPanel("Scenarios", &ed.showProject)) {
     ImGui::End();
     return;
   }
-  // Toolbar: breadcrumb left, actions and tile size right
-  ImGui::TextDisabled("Assets  >");
+  // The Ville: Generative Agents' town, at whatever size the machine handles.
+  ImGui::PushFont(ed.fonts.bold, 0.0f);
+  ImGui::TextUnformatted("The Ville");
+  ImGui::PopFont();
   ImGui::SameLine();
-  ImGui::TextUnformatted(ed.assetsDir.filename().string().c_str());
+  ImGui::TextDisabled("Generative Agents (Park et al. 2023) -- residents plan, remember, talk, and reflect");
+  for (int pop : {25, 250, 1000, 5000}) {
+    bool active = ed.villePopulation == pop;
+    std::string label = std::to_string(pop) + (pop == 25 ? " residents\nthe paper's cast" : " residents\ngenerated town");
+    ImGui::PushStyleColor(ImGuiCol_Button, active ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
+    if (ImGui::Button(label.c_str(), ImVec2(150, 44))) loadVille(ed, pop);
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+  }
+  ImGui::NewLine();
+  ImGui::Separator();
+  ImGui::PushFont(ed.fonts.bold, 0.0f);
+  ImGui::TextUnformatted("SocialLang games");
+  ImGui::PopFont();
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", ed.assetsDir.string().c_str());
   ImGui::SameLine();
   float right = 90 + 70 + 70 + 110 + 30;
   ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10, ImGui::GetWindowWidth() - right));
@@ -65,9 +82,9 @@ void drawProject(EditorState& ed) {
     ImVec2 tp(p.x + (cellW - 8 - ts.x) * 0.5f, p.y + tile + 2);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), tp,
                 selected ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImGuiCol_Text), label.c_str(), nullptr, wrap);
-    if (hovered) ImGui::SetTooltip("%s\nDouble-click to open in the Scene", a.path.string().c_str());
+    if (hovered) ImGui::SetTooltip("%s\nDouble-click to load it", a.path.string().c_str());
     if (ImGui::BeginPopupContextItem("##ctx")) {
-      if (ImGui::MenuItem("Open in Scene")) loadAsset(ed, (int)i);
+      if (ImGui::MenuItem("Load")) loadAsset(ed, (int)i);
       if (ImGui::MenuItem("Edit Script")) {
         a.scriptOpen = true;
         a.focusScript = true;
@@ -109,11 +126,11 @@ void drawScripts(EditorState& ed) {
       if (ImGui::SmallButton("Revert")) a.text = a.saved;
       ImGui::EndDisabled();
       ImGui::SameLine();
-      if (ImGui::SmallButton(isActive ? "Reload in Scene" : "Open in Scene")) {
+      if (ImGui::SmallButton(isActive ? "Reload" : "Load")) {
         if (a.dirty()) saveAsset(ed, (int)i);
         loadAsset(ed, (int)i);
       }
-      ImGui::SetItemTooltip("Save, then parse and load this script into the Scene at round 0");
+      ImGui::SetItemTooltip("Save, then parse and load this script at round 0");
       ImGui::SameLine();
       ImGui::TextDisabled("%s", a.dirty() ? "unsaved  |  Ctrl+S to save" : "saved");
       if (isActive && ed.info.status == SimStatus::CompileError) {

@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "app/editor.h"
+#include "ville/world.h"
 
 namespace app {
 
@@ -104,7 +105,135 @@ void recentActivity(EditorState& ed, int agent, size_t logEnd, int max) {
   if (shown == 0) ImGui::TextDisabled("Nothing yet -- press Play or Step.");
 }
 
+
+// ---- The Ville: a resident's generative-agent state, and a room.
+
+void wrapped(const std::string& s) {
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextUnformatted(s.c_str());
+  ImGui::PopTextWrapPos();
+}
+
+void inspectResident(EditorState& ed, int i) {
+  const SimInfo& info = ed.info;
+  const AgentStatic& a = info.agents[i];
+  const AgentDetail* d = info.details && i < (int)info.details->size() ? &(*info.details)[i] : nullptr;
+  std::string sub = a.role + "  |  lives at " + a.team;
+  objectHeader(ed, [](EditorState& e, int x, float s) { agentIcon(e, x, s); }, i, a.seat.c_str(), sub.c_str());
+  if (!d) return;
+
+  if (component(ed, "Now")) {
+    ImGui::PushFont(ed.fonts.bold, 0.0f);
+    wrapped(d->emoji + "  " + d->action);
+    ImGui::PopFont();
+    if (!d->address.empty()) ImGui::TextDisabled("%s", d->address.c_str());
+    if (d->chatWith >= 0 && d->chatWith < (int)info.agents.size()) {
+      ImGui::TextDisabled("talking with");
+      ImGui::SameLine();
+      if (ImGui::TextLink(info.agents[d->chatWith].seat.c_str())) ed.sel = {SelKind::Agent, d->chatWith};
+      if (!d->utterance.empty()) wrapped("\"" + d->utterance + "\"");
+    }
+    endComponent();
+  }
+  if (component(ed, "Identity")) {
+    propertyRow("Innate", "%s", d->innate.c_str());
+    propertyRow("Learned", "%s", d->learned.c_str());
+    propertyRow("Currently", "%s", d->currently.c_str());
+    propertyRow("Lifestyle", "%s", d->lifestyle.c_str());
+    propertyRow("Home", "%s", d->homeName.c_str());
+    propertyRow("Work", "%s", d->workName.c_str());
+    propertyRow("Thinks with", "%s", a.model.c_str());
+    endComponent();
+  }
+  if (!d->dailyPlan.empty() && component(ed, "Daily plan")) {
+    for (size_t k = 0; k < d->dailyPlan.size(); ++k) ImGui::BulletText("%s", d->dailyPlan[k].c_str());
+    endComponent();
+  }
+  if (!d->plan.empty() && component(ed, "Hourly schedule")) {
+    std::string last;
+    for (size_t h = 0; h < d->plan.size(); ++h) {
+      bool now = (int)h == d->planCursor;
+      if (d->plan[h].second == last && !now) continue;
+      last = d->plan[h].second;
+      if (now) ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(ed.pal.select), "> %s  %s", d->plan[h].first.c_str(), last.c_str());
+      else ImGui::TextDisabled("  %s  %s", d->plan[h].first.c_str(), last.c_str());
+      if (now && !d->subplan.empty()) {
+        ImGui::Indent(22);
+        for (size_t k = 0; k < d->subplan.size(); ++k) {
+          if ((int)k == d->subplanCursor) ImGui::TextUnformatted(("- " + d->subplan[k]).c_str());
+          else ImGui::TextDisabled("- %s", d->subplan[k].c_str());
+        }
+        ImGui::Unindent(22);
+      }
+    }
+    endComponent();
+  }
+  char memTitle[64];
+  std::snprintf(memTitle, sizeof memTitle, "Memory stream (%d)###mem", d->memoryCount);
+  if (component(ed, memTitle)) {
+    ImGui::TextDisabled("newest first  |  [importance 1-10]");
+    for (auto& [type, text] : d->memories) {
+      sl::LogKind k = type == 2 ? sl::LogKind::Reflection : type == 1 ? sl::LogKind::Dialogue : sl::LogKind::Note;
+      kindIcon(ed, k, ImGui::GetTextLineHeight());
+      ImGui::SameLine();
+      wrapped(text);
+    }
+    endComponent();
+  }
+  if (!d->relations.empty() && component(ed, "Relationships")) {
+    for (auto& [who, fam] : d->relations) {
+      int idx = seatIndex(ed, who);
+      ImGui::PushID(who.c_str());
+      if (ImGui::TextLink(who.c_str()) && idx >= 0) ed.sel = {SelKind::Agent, idx};
+      ImGui::SameLine();
+      ImGui::TextDisabled("%.0f conversation%s", fam, fam == 1 ? "" : "s");
+      ImGui::PopID();
+    }
+    endComponent();
+  }
+  if (!d->knows.empty() && component(ed, "Knows")) {
+    for (auto& k : d->knows) ImGui::BulletText("%s", k.c_str());
+    endComponent();
+  }
+}
+
+void inspectRoom(EditorState& ed, int arena) {
+  if (!ed.info.villeWorld) return;
+  const ville::World& w = *ed.info.villeWorld;
+  const ville::Arena& ar = w.arenas[arena];
+  objectHeader(ed, locationIconFn, arena, ar.name.c_str(), w.sectors[ar.sector].name.c_str());
+  if (component(ed, "Objects")) {
+    for (int o : ar.objects) {
+      bool busy = ed.info.objectBusy && o < (int)ed.info.objectBusy->size() && (*ed.info.objectBusy)[o];
+      propertyRow(w.objects[o].name.c_str(), "%s", busy ? w.objects[o].state.c_str() : "idle");
+    }
+    endComponent();
+  }
+  if (component(ed, "Here now")) {
+    const Frame* f = viewedFrame(ed);
+    int n = 0;
+    if (f)
+      for (size_t i = 0; i < f->agents.size(); ++i) {
+        if (f->agents[i].location != arena) continue;
+        ++n;
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::TextLink(ed.info.agents[i].seat.c_str())) ed.sel = {SelKind::Agent, static_cast<int>(i)};
+        if (ed.info.details && i < ed.info.details->size()) {
+          ImGui::SameLine();
+          ImGui::TextDisabled("%s %s", (*ed.info.details)[i].emoji.c_str(), (*ed.info.details)[i].action.c_str());
+        }
+        ImGui::PopID();
+      }
+    if (n == 0) ImGui::TextDisabled("Nobody here right now.");
+    endComponent();
+  }
+}
+
 void inspectAgent(EditorState& ed, int i) {
+  if (ed.info.isVille) {
+    inspectResident(ed, i);
+    return;
+  }
   const SimInfo& info = ed.info;
   const AgentStatic& a = info.agents[i];
   const Frame* f = viewedFrame(ed);
@@ -115,7 +244,7 @@ void inspectAgent(EditorState& ed, int i) {
   std::string sub = revealed ? "Role " + a.role + "  |  Team " + a.team : "Role hidden until revealed";
   objectHeader(ed, [](EditorState& e, int x, float s) { agentIcon(e, x, s); }, i, a.seat.c_str(), sub.c_str());
 
-  if (component(ed, "Transform")) {
+  if (component(ed, "Location")) {
     if (live && live->hasPos) readOnlyVec2("Position", live->x, live->y);
     else propertyRow("Position", "%s", info.hasWorld ? "not placed yet" : "no world in this game");
     if (live && live->location >= 0 && live->location < (int)info.locations.size()) {
@@ -174,9 +303,13 @@ void inspectAgent(EditorState& ed, int i) {
 }
 
 void inspectLocation(EditorState& ed, int li) {
+  if (ed.info.isVille) {
+    inspectRoom(ed, li);
+    return;
+  }
   const sl::Location& loc = ed.info.locations[li];
   objectHeader(ed, locationIconFn, li, loc.id.c_str(), ("Type " + loc.type).c_str());
-  if (component(ed, "Transform")) {
+  if (component(ed, "Position")) {
     readOnlyVec2("Position", (float)loc.x, (float)loc.y);
     endComponent();
   }
@@ -289,8 +422,8 @@ void drawInspector(EditorState& ed) {
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0);
     ImGui::TextDisabled(
-        "Click an agent or location in the Scene or Hierarchy to inspect it, the sim's name in the "
-        "Hierarchy for run settings, or a script in the Project panel.");
+        "Click a resident or a room in the World view or the Town panel to inspect them: what they're doing, "
+        "their plan for the day, their memory stream, and who they know.");
     ImGui::PopTextWrapPos();
   }
   ImGui::End();

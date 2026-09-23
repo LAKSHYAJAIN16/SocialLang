@@ -9,6 +9,7 @@
 
 #include "app/editor.h"
 #include "imgui_internal.h"
+#include "ville/world.h"
 
 namespace app {
 
@@ -89,11 +90,229 @@ bool toggleChip(const char* label, bool* v) {
   return pressed;
 }
 
+
+// ---- The Ville: tile map, buildings, residents, bubbles.
+
+ImU32 rgb(unsigned c, int a = 255) { return IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, a); }
+
+ImU32 floorColor(ville::SectorKind k) {
+  using K = ville::SectorKind;
+  switch (k) {
+    case K::Home: return rgb(0xC49A6C);
+    case K::Cafe: return rgb(0xD9B38C);
+    case K::Pub: return rgb(0x8B6A47);
+    case K::Store: return rgb(0xB8B8A8);
+    case K::Market: return rgb(0xD8D8BC);
+    case K::College: return rgb(0xC9B79C);
+    case K::Dorm: return rgb(0xA9B8C8);
+    case K::TownHall: return rgb(0xCFC6B0);
+    case K::Office: return rgb(0xB4BCC6);
+    case K::Park: return rgb(0x6B8F4E);
+  }
+  return rgb(0xC0C0C0);
+}
+
+ImU32 residentColor(const std::string& name) {
+  static const unsigned kColors[] = {0xE4572E, 0x2E86AB, 0xF3A712, 0x6A994E, 0x9B5DE5, 0xF15BB5,
+                                     0x00BBF9, 0xE07A5F, 0x3D405B, 0x81B29A, 0xC1121F, 0x1B998B};
+  return rgb(kColors[std::hash<std::string>()(name) % 12]);
+}
+
+std::string shortText(const std::string& s, size_t n) { return s.size() <= n ? s : s.substr(0, n - 3) + "..."; }
+
+void pill(ImDrawList* dl, ImVec2 center, const char* text, ImU32 bg, ImU32 fg, float padX = 5, float padY = 2) {
+  ImVec2 ts = ImGui::CalcTextSize(text);
+  ImVec2 a(center.x - ts.x * 0.5f - padX, center.y - ts.y * 0.5f - padY), b(center.x + ts.x * 0.5f + padX, center.y + ts.y * 0.5f + padY);
+  dl->AddRectFilled(a, b, bg, 4);
+  dl->AddText(ImVec2(a.x + padX, a.y + padY), fg, text);
+}
+
+// Draws the town and its residents; returns the hovered resident (or -1) and
+// sets hoverRoom to the room under the cursor.
+int drawVille(EditorState& ed, ImDrawList* dl, const View& v, const Frame& frame, bool hovered, ImVec2 mouse,
+              int& hoverRoom) {
+  const SimInfo& info = ed.info;
+  if (!info.villeWorld) return -1;
+  const ville::World& w = *info.villeWorld;
+  float ts = v.scale;  // pixels per tile
+  ImVec2 w0 = v.toWorld(v.origin), w1 = v.toWorld(ImVec2(v.origin.x + v.size.x, v.origin.y + v.size.y));
+  int x0 = std::max(0, (int)std::floor(w0.x)), y0 = std::max(0, (int)std::floor(w0.y));
+  int x1 = std::min(w.width() - 1, (int)std::ceil(w1.x)), y1 = std::min(w.height() - 1, (int)std::ceil(w1.y));
+  auto T = [&](float x, float y) { return v.toScreen(x, y); };
+
+  if (ts >= 5.0f) {
+    // Every visible tile.
+    for (int y = y0; y <= y1; ++y)
+      for (int x = x0; x <= x1; ++x) {
+        ville::Tile t = w.tile(x, y);
+        ImU32 c;
+        switch (t) {
+          case ville::Tile::Grass: c = rgb(0x6B8F4E); break;
+          case ville::Tile::Road: c = rgb(0x8C8C84); break;
+          case ville::Tile::Plaza: c = rgb(0xC8B894); break;
+          case ville::Tile::Wall: c = rgb(0x3A3A44); break;
+          case ville::Tile::Door: c = rgb(0x8A5A2B); break;
+          case ville::Tile::Water: c = rgb(0x4A86C5); break;
+          case ville::Tile::Tree: c = rgb(0x6B8F4E); break;
+          default: {
+            int s = w.sectorAt(x, y);
+            c = s >= 0 ? floorColor(w.sectors[s].kind) : rgb(0xC0C0C0);
+          }
+        }
+        ImVec2 a = T((float)x, (float)y), b = T((float)x + 1, (float)y + 1);
+        dl->AddRectFilled(a, ImVec2(b.x + 0.5f, b.y + 0.5f), c);
+        if (t == ville::Tile::Tree) dl->AddCircleFilled(ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), ts * 0.45f, rgb(0x2F5F2A), 10);
+      }
+    // Floor tile seams inside buildings, once zoomed in.
+    if (ts >= 14)
+      for (int y = y0; y <= y1; ++y)
+        for (int x = x0; x <= x1; ++x)
+          if (w.tile(x, y) == ville::Tile::Floor) {
+            ImVec2 a = T((float)x, (float)y), b = T((float)x + 1, (float)y + 1);
+            dl->AddRect(a, b, IM_COL32(0, 0, 0, 18));
+          }
+  } else {
+    // Zoomed out: grass, the street grid, and each building as a block
+    // (the street grid matches World::generate's 28x20 cells).
+    dl->AddRectFilled(T(0, 0), T((float)w.width(), (float)w.height()), rgb(0x6B8F4E));
+    for (int x = 0; x < w.width(); x += 28) dl->AddRectFilled(T((float)x, 0), T((float)x + 2, (float)w.height()), rgb(0x8C8C84));
+    for (int y = 0; y < w.height(); y += 20) dl->AddRectFilled(T(0, (float)y), T((float)w.width(), (float)y + 2), rgb(0x8C8C84));
+    for (auto& s : w.sectors) {
+      ImVec2 a = T((float)s.rect.x, (float)s.rect.y), b = T((float)(s.rect.x + s.rect.w), (float)(s.rect.y + s.rect.h));
+      dl->AddRectFilled(a, b, floorColor(s.kind));
+      if (s.kind != ville::SectorKind::Park) dl->AddRect(a, b, rgb(0x3A3A44), 0, 0, std::max(1.0f, ts * 0.8f));
+    }
+  }
+
+  // Furniture and in-use objects.
+  if (ts >= 7) {
+    for (size_t o = 0; o < w.objects.size(); ++o) {
+      const ville::GameObject& obj = w.objects[o];
+      if (obj.x < x0 || obj.x > x1 || obj.y < y0 || obj.y > y1) continue;
+      bool busy = info.objectBusy && o < info.objectBusy->size() && (*info.objectBusy)[o];
+      ImVec2 a = T(obj.x + 0.15f, obj.y + 0.15f), b = T(obj.x + 0.85f, obj.y + 0.85f);
+      dl->AddRectFilled(a, b, rgb(0x6E5A48), ts * 0.12f);
+      if (busy) dl->AddRect(a, b, rgb(0xF2C744), ts * 0.12f, 0, std::max(1.5f, ts * 0.08f));
+      if (ts >= 26) {
+        ImVec2 tsz = ImGui::CalcTextSize(obj.name.c_str());
+        dl->AddText(ImVec2((a.x + b.x - tsz.x) * 0.5f, b.y + 1), IM_COL32(30, 30, 30, 200), obj.name.c_str());
+      }
+    }
+  }
+
+  // Room names (zoomed in) and building names.
+  if (ts >= 13 && ed.showLabels)
+    for (auto& ar : w.arenas) {
+      if (ar.rect.x > x1 || ar.rect.y > y1 || ar.rect.x + ar.rect.w < x0 || ar.rect.y + ar.rect.h < y0) continue;
+      if (ImGui::CalcTextSize(ar.name.c_str()).x < ar.rect.w * ts - 6)
+        dl->AddText(T(ar.rect.x + 0.2f, ar.rect.y + ar.rect.h - 0.9f), IM_COL32(40, 30, 20, 170), ar.name.c_str());
+    }
+  if (ts >= 2.2f && ed.showLabels)
+    for (auto& s : w.sectors) {
+      if (s.rect.x > x1 || s.rect.y > y1 || s.rect.x + s.rect.w < x0 || s.rect.y + s.rect.h < y0) continue;
+      ImVec2 c = T(s.rect.x + s.rect.w * 0.5f, (float)s.rect.y);
+      // Clip the name to the building's width so neighbors don't overlap.
+      float maxW = s.rect.w * ts - 8;
+      std::string name = s.name;
+      while (name.size() > 4 && ImGui::CalcTextSize(name.c_str()).x > maxW) name = name.substr(0, name.size() - 4) + "...";
+      if (ImGui::CalcTextSize(name.c_str()).x <= maxW)
+        pill(dl, ImVec2(c.x, c.y - 2), name.c_str(), IM_COL32(20, 20, 24, 200), IM_COL32(245, 245, 245, 255));
+    }
+
+  // Rooms under the cursor.
+  if (hovered) {
+    ImVec2 m = v.toWorld(mouse);
+    int mx = (int)std::floor(m.x), my = (int)std::floor(m.y);
+    if (mx >= 0 && my >= 0 && mx < w.width() && my < w.height()) hoverRoom = w.arenaAt(mx, my);
+  }
+  if (ed.sel.kind == SelKind::Location && ed.sel.index >= 0 && ed.sel.index < (int)w.arenas.size()) {
+    const ville::Rect& r = w.arenas[ed.sel.index].rect;
+    dl->AddRect(T((float)r.x, (float)r.y), T((float)(r.x + r.w), (float)(r.y + r.h)), ed.pal.select, 0, 0, 2.5f);
+  }
+
+  // Conversations in the last ten game-minutes, as lines between speakers.
+  size_t logEnd = std::min(frame.logCount, ed.log.size());
+  if (ed.showTalk)
+    for (size_t k = logEnd; k-- > 0;) {
+      const sl::LogEntry& e = ed.log[k];
+      if (e.round < frame.round - 60) break;
+      if (e.kind != sl::LogKind::Dialogue || e.visibleTo.size() != 2) continue;
+      int a = e.visibleTo[0], b = e.visibleTo[1];
+      if (a >= (int)frame.agents.size() || b >= (int)frame.agents.size()) continue;
+      dl->AddLine(T(frame.agents[a].x, frame.agents[a].y), T(frame.agents[b].x, frame.agents[b].y), ed.pal.talk, 2.0f);
+    }
+
+  // Residents.
+  int n = static_cast<int>(frame.agents.size());
+  const auto* details = info.details ? info.details.get() : nullptr;
+  float r = std::clamp(ts * 0.45f, 2.0f, 16.0f);
+  int hover = -1;
+  float bestD = std::max(8.0f, r + 3);
+  std::vector<int> onScreen;
+  for (int i = 0; i < n; ++i) {
+    ImVec2 p = T(frame.agents[i].x, frame.agents[i].y);
+    if (p.x < v.origin.x - 20 || p.y < v.origin.y - 20 || p.x > v.origin.x + v.size.x + 20 || p.y > v.origin.y + v.size.y + 20)
+      continue;
+    onScreen.push_back(i);
+    if (hovered) {
+      float d = std::hypot(mouse.x - p.x, mouse.y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        hover = i;
+      }
+    }
+  }
+  for (int i : onScreen) {
+    ImVec2 p = T(frame.agents[i].x, frame.agents[i].y);
+    ImU32 col = residentColor(info.agents[i].seat);
+    if (ts < 3.0f) {
+      dl->AddRectFilled(ImVec2(p.x - 1.5f, p.y - 1.5f), ImVec2(p.x + 1.5f, p.y + 1.5f), col);
+      continue;
+    }
+    // A little figure: shadow, body, head.
+    dl->AddCircleFilled(ImVec2(p.x, p.y + r * 0.85f), r * 0.7f, IM_COL32(0, 0, 0, 60), 12);
+    dl->AddCircleFilled(ImVec2(p.x, p.y + r * 0.25f), r * 0.62f, col, 14);
+    dl->AddCircleFilled(ImVec2(p.x, p.y - r * 0.5f), r * 0.45f, rgb(0xF1C9A0), 14);
+    dl->AddCircle(ImVec2(p.x, p.y - r * 0.5f), r * 0.45f, IM_COL32(60, 40, 30, 160), 14, 1.0f);
+    if (ed.sel.kind == SelKind::Agent && ed.sel.index == i) dl->AddCircle(ImVec2(p.x, p.y), r * 1.5f, ed.pal.select, 24, 2.5f);
+  }
+  // Names and bubbles once there's room to read them.
+  bool fewEnough = onScreen.size() <= 80;
+  for (int i : onScreen) {
+    bool selected = ed.sel.kind == SelKind::Agent && ed.sel.index == i;
+    if (!selected && (ts < 11 || !fewEnough)) continue;
+    ImVec2 p = T(frame.agents[i].x, frame.agents[i].y);
+    const std::string& name = info.agents[i].seat;
+    std::string first = name.substr(0, name.find(' '));
+    if (ed.showLabels) {
+      ImVec2 tsz = ImGui::CalcTextSize(first.c_str());
+      dl->AddText(ImVec2(p.x - tsz.x * 0.5f, p.y + r * 0.95f), IM_COL32(15, 15, 15, 230), first.c_str());
+    }
+    if (!ed.showGizmos || !details || i >= (int)details->size()) continue;
+    const AgentDetail& d = (*details)[i];
+    if (d.chatWith >= 0 && !d.utterance.empty()) {
+      // Speech bubble with what they're saying.
+      std::string text = shortText(d.utterance, 90);
+      float wrap = 190;
+      ImVec2 tsz = ImGui::CalcTextSize(text.c_str(), nullptr, false, wrap);
+      ImVec2 a(p.x - tsz.x * 0.5f - 6, p.y - r * 1.2f - tsz.y - 12), b(p.x + tsz.x * 0.5f + 6, p.y - r * 1.2f - 4);
+      dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 240), 6);
+      dl->AddTriangleFilled(ImVec2(p.x - 4, b.y), ImVec2(p.x + 4, b.y), ImVec2(p.x, b.y + 5), IM_COL32(255, 255, 255, 240));
+      dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + 6, a.y + 4), IM_COL32(20, 20, 20, 255), text.c_str(), nullptr, wrap);
+    } else {
+      // Emoji + what they're doing, like the paper's replay.
+      std::string text = d.emoji + " " + shortText(d.action, selected ? 60 : 28);
+      pill(dl, ImVec2(p.x, p.y - r * 1.25f - 8), text.c_str(), IM_COL32(20, 20, 24, 215), IM_COL32(250, 250, 250, 255));
+    }
+  }
+  return hover;
+}
+
 }  // namespace
 
 void drawScene(EditorState& ed) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  bool open = beginPanel("Scene", &ed.showScene, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  bool open = beginPanel("World", &ed.showScene, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar();
   if (ImGui::GetWindowDockID()) ed.sceneDockId = ImGui::GetWindowDockID();
   if (!open) {
@@ -104,13 +323,13 @@ void drawScene(EditorState& ed) {
   const Frame* frame = viewedFrame(ed);
   ImVec2 ws = worldSize(info);
 
-  // ---- Scene toolbar (Unity's strip above the view)
+  // ---- View toolbar
   ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 6, ImGui::GetCursorPosY() + 4));
   toggleChip("Labels", &ed.showLabels);
   ImGui::SameLine();
   toggleChip("Talk lines", &ed.showTalk);
   ImGui::SameLine();
-  toggleChip("Gizmos", &ed.showGizmos);
+  toggleChip(info.isVille ? "Bubbles" : "Highlights", &ed.showGizmos);
   ImGui::SameLine();
   if (ImGui::SmallButton("Frame All")) ed.fitView = true;
   ImGui::SetItemTooltip("Fit the whole world in view");
@@ -184,17 +403,23 @@ void drawScene(EditorState& ed) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
   dl->AddRectFilled(origin, ImVec2(origin.x + size.x, origin.y + size.y), ed.pal.sceneBg);
-  drawGrid(dl, v, ed);
+  if (!info.isVille) drawGrid(dl, v, ed);
 
   if (info.status == SimStatus::Empty) {
-    centeredText(ed, v, "Open a game: double-click a .sl file in the Project panel.", ImGui::GetColorU32(ImGuiCol_Text));
+    centeredText(ed, v, "Pick a scenario in the Scenarios panel.", ImGui::GetColorU32(ImGuiCol_Text));
   } else if (info.status == SimStatus::CompileError) {
-    std::string msg = "All compiler errors have to be fixed before you can enter Play mode!\n\n" + info.error;
+    std::string msg = "This script has errors -- fix them to run it.\n\n" + info.error;
     centeredText(ed, v, msg.c_str(), ed.pal.error);
   }
 
   int hoverAgent = -1, hoverLoc = -1;
-  if (frame && !info.agents.empty()) {
+  if (frame && !info.agents.empty() && info.isVille) {
+    hoverAgent = drawVille(ed, dl, v, *frame, hovered && !panning, io.MousePos, hoverLoc);
+    // The game clock, on the map.
+    std::string clock = info.clock + (info.busy && !info.playing ? "" : "");
+    pill(dl, ImVec2(origin.x + 14 + ImGui::CalcTextSize(clock.c_str()).x * 0.5f, origin.y + 16), clock.c_str(),
+         IM_COL32(20, 20, 24, 220), IM_COL32(250, 250, 250, 255), 8, 4);
+  } else if (frame && !info.agents.empty()) {
     // World bounds
     if (info.hasWorld && info.worldW > 0) {
       ImVec2 a = v.toScreen(0, 0), b = v.toScreen(ws.x, ws.y);
@@ -303,14 +528,6 @@ void drawScene(EditorState& ed) {
       ImVec2 w = agentPos(info, *frame, ed.sel.index);
       ImVec2 p = v.toScreen(w.x, w.y);
       dl->AddCircle(p, r + 3, ed.pal.select, 20, 2.5f);
-      if (ed.showGizmos) {
-        float L = 44;
-        dl->AddLine(p, ImVec2(p.x + L, p.y), ed.pal.gizmoX, 2.5f);
-        dl->AddTriangleFilled(ImVec2(p.x + L + 9, p.y), ImVec2(p.x + L, p.y - 5), ImVec2(p.x + L, p.y + 5), ed.pal.gizmoX);
-        dl->AddLine(p, ImVec2(p.x, p.y - L), ed.pal.gizmoY, 2.5f);
-        dl->AddTriangleFilled(ImVec2(p.x, p.y - L - 9), ImVec2(p.x - 5, p.y - L), ImVec2(p.x + 5, p.y - L), ed.pal.gizmoY);
-        dl->AddRectFilled(ImVec2(p.x + 6, p.y - 16), ImVec2(p.x + 16, p.y - 6), IM_COL32(60, 120, 230, 110));
-      }
     }
 
     // Winner banner
@@ -379,7 +596,8 @@ void drawScene(EditorState& ed) {
   int vf = std::clamp(ed.viewFrame, 0, maxFrame);
   int shownRound = ed.frames.empty() ? 0 : ed.frames[vf]->round;
   char fmt[48];
-  std::snprintf(fmt, sizeof fmt, "Round %d", shownRound);
+  if (info.isVille) std::snprintf(fmt, sizeof fmt, "%s", villeClockForStep(shownRound).c_str());
+  else std::snprintf(fmt, sizeof fmt, "Round %d", shownRound);
   ImGui::BeginDisabled(ed.frames.size() <= 1);
   if (ImGui::SliderInt("##timeline", &vf, 0, maxFrame, fmt)) {
     ed.viewFrame = vf;
@@ -387,7 +605,8 @@ void drawScene(EditorState& ed) {
   }
   ImGui::EndDisabled();
   ImGui::SameLine();
-  ImGui::TextDisabled("%d rounds", ed.frames.empty() ? 0 : ed.frames.back()->round);
+  if (info.isVille) ImGui::TextDisabled("step %d", ed.frames.empty() ? 0 : ed.frames.back()->round);
+  else ImGui::TextDisabled("%d rounds", ed.frames.empty() ? 0 : ed.frames.back()->round);
 
   ImGui::End();
 }

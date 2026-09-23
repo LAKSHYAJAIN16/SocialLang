@@ -205,6 +205,9 @@ void refreshAssets(EditorState& ed) {
 
 void loadAsset(EditorState& ed, int index) {
   if (index < 0 || index >= (int)ed.assets.size()) return;
+  if (ed.villePopulation > 0 && ed.roundsPerSecond > 60) ed.roundsPerSecond = 4;
+  ed.villePopulation = 0;
+  ed.nameIndex.clear();
   ed.activeAsset = index;
   ed.playMode = false;
   ed.sim.load(ed.assets[index].text, ed.seed, ed.settings);
@@ -213,6 +216,31 @@ void loadAsset(EditorState& ed, int index) {
   ed.fitView = true;
   ed.followLatest = true;
   ed.selectedLog = -1;
+}
+
+void loadVille(EditorState& ed, int population) {
+  ed.villePopulation = population;
+  ed.activeAsset = -1;
+  ed.playMode = false;
+  ed.sim.loadVille(population, ed.seed, ed.settings);
+  ed.info = ed.sim.info();
+  ed.nameIndex.clear();
+  for (size_t i = 0; i < ed.info.agents.size(); ++i) ed.nameIndex[ed.info.agents[i].seat] = static_cast<int>(i);
+  ed.sel = {};
+  ed.fitView = true;
+  ed.followLatest = true;
+  ed.selectedLog = -1;
+  if (ed.roundsPerSecond < 10) ed.roundsPerSecond = 30;
+}
+
+std::string villeClockForStep(long long step) {
+  static const char* kDays[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+  long long minutes = 6 * 60 + step * ville::kSecondsPerStep / 60;
+  int d = static_cast<int>(minutes / 1440), m = static_cast<int>(minutes % 1440);
+  char buf[48];
+  std::snprintf(buf, sizeof buf, "%s Feb %d, %d:%02d %s", kDays[d % 7], 13 + d, (m / 60) % 12 == 0 ? 12 : (m / 60) % 12,
+                m % 60, m < 720 ? "am" : "pm");
+  return buf;
 }
 
 bool saveAsset(EditorState& ed, int index) {
@@ -260,7 +288,9 @@ void initEditor(EditorState& ed) {
   int first = 0;
   for (size_t i = 0; i < ed.assets.size(); ++i)
     if (ed.assets[i].name == ed.launch.game) first = static_cast<int>(i);
-  if (!ed.assets.empty()) loadAsset(ed, first);
+  if (ed.launch.ville > 0) loadVille(ed, ed.launch.ville);
+  else if (!ed.launch.game.empty() && !ed.assets.empty()) loadAsset(ed, first);
+  else loadVille(ed, 25);  // The Ville is the default scenario
   if (ed.launch.toEnd) {
     ed.playMode = true;
     ed.sim.runToEnd();
@@ -273,7 +303,7 @@ void initEditor(EditorState& ed) {
 
 void enterPlay(EditorState& ed) {
   if (ed.info.status == SimStatus::CompileError) {
-    notify(ed, "All compiler errors have to be fixed before you can enter Play mode!");
+    notify(ed, "This script has errors -- fix them to run it.");
     return;
   }
   if (ed.info.status == SimStatus::Empty) return;
@@ -321,6 +351,10 @@ bool teamRevealed(const EditorState& ed, int agent) {
 }
 
 int seatIndex(const EditorState& ed, const std::string& seat) {
+  if (!ed.nameIndex.empty()) {
+    auto it = ed.nameIndex.find(seat);
+    return it == ed.nameIndex.end() ? -1 : it->second;
+  }
   if (seat.size() < 2 || seat[0] != 'P') return -1;
   int n = 0;
   for (size_t i = 1; i < seat.size(); ++i) {
@@ -400,6 +434,7 @@ void parseLaunchArgs(EditorState& ed, int argc, wchar_t** argv) {
     else if (a == "--to-end") ed.launch.toEnd = true;
     else if (a == "--light") ed.launch.light = true;
     else if (a == "--settings") ed.launch.settings = true;
+    else if (a == "--ville") ed.launch.ville = std::atoi(next().c_str());
   }
 }
 
@@ -532,11 +567,11 @@ void drawMenuBar(EditorState& ed) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Window")) {
-    ImGui::MenuItem("Hierarchy", nullptr, &ed.showHierarchy);
-    ImGui::MenuItem("Scene", nullptr, &ed.showScene);
+    ImGui::MenuItem("Town", nullptr, &ed.showHierarchy);
+    ImGui::MenuItem("World", nullptr, &ed.showScene);
     ImGui::MenuItem("Inspector", nullptr, &ed.showInspector);
-    ImGui::MenuItem("Project", nullptr, &ed.showProject);
-    ImGui::MenuItem("Console", nullptr, &ed.showConsole);
+    ImGui::MenuItem("Scenarios", nullptr, &ed.showProject);
+    ImGui::MenuItem("Activity", nullptr, &ed.showConsole);
     ImGui::Separator();
     if (ImGui::MenuItem("Reset Layout")) {
       ed.resetLayout = true;
@@ -570,14 +605,23 @@ void drawToolbar(EditorState& ed) {
     ImGui::Dummy(ImVec2(24, 24));
     ImGui::SameLine(0, 10);
     ImGui::SetNextItemWidth(210);
-    const char* current = ed.activeAsset >= 0 ? ed.assets[ed.activeAsset].name.c_str() : "No game loaded";
+    std::string current = ed.villePopulation > 0 ? "The Ville - " + std::to_string(ed.villePopulation) + " residents"
+                          : ed.activeAsset >= 0 ? ed.assets[ed.activeAsset].name
+                                                : "No scenario loaded";
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1);
-    if (ImGui::BeginCombo("##game", current)) {
+    if (ImGui::BeginCombo("##game", current.c_str())) {
+      ImGui::TextDisabled("The Ville (Generative Agents)");
+      for (int pop : {25, 250, 1000, 5000}) {
+        std::string label = "The Ville - " + std::to_string(pop) + " residents" + (pop == 25 ? " (the paper's cast)" : "");
+        if (ImGui::Selectable(label.c_str(), ed.villePopulation == pop)) loadVille(ed, pop);
+      }
+      ImGui::Separator();
+      ImGui::TextDisabled("SocialLang games");
       for (size_t i = 0; i < ed.assets.size(); ++i)
         if (ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.activeAsset)) loadAsset(ed, (int)i);
       ImGui::EndCombo();
     }
-    ImGui::SetItemTooltip("Game loaded into the Scene");
+    ImGui::SetItemTooltip("Scenario loaded into the World view");
 
     // Center: Play / Pause / Step, then run-to-end
     float groupW = 30 * 3 + 2 * 2 + 12 + 30;
@@ -593,21 +637,37 @@ void drawToolbar(EditorState& ed) {
     bool canStep = canRun && ed.info.status != SimStatus::Done && ed.info.status != SimStatus::RuntimeError;
     if (iconButton(ed, "##step", Icon::Step, false, canStep, "Step one round (Ctrl+Alt+P)")) stepOnce(ed);
     ImGui::SameLine(0, 12);
-    if (iconButton(ed, "##toend", Icon::FastForward, false, canStep, "Run to the end as fast as possible")) {
+    if (iconButton(ed, "##toend", Icon::FastForward, false, canStep,
+                   ed.villePopulation > 0 ? "Fast-forward: simulate as fast as the machine allows" : "Run to the end as fast as possible")) {
       ed.playMode = true;
       ed.followLatest = true;
       ed.sim.runToEnd();
     }
     ImGui::PopStyleVar();
+    if (ed.info.isVille) {  // the game clock, right of the transport
+      ImGui::SameLine(0, 14);
+      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
+      ImGui::PushFont(ed.fonts.bold, 0.0f);
+      ImGui::TextUnformatted(ed.info.clock.c_str());
+      ImGui::PopFont();
+    }
 
     // Right: speed, models, theme
-    float rightW = 170 + 8 + 130 + 8 + 30;
+    float rightW = 190 + 8 + 130 + 8 + 30;
     ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 16, ImGui::GetWindowWidth() - rightW - 8));
-    ImGui::SetNextItemWidth(170);
+    ImGui::SetNextItemWidth(190);
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1);
-    if (ImGui::SliderFloat("##speed", &ed.roundsPerSecond, 0.5f, 60.0f, "%.1f rounds/s", ImGuiSliderFlags_Logarithmic))
-      ed.sim.setSpeed(ed.roundsPerSecond);
-    ImGui::SetItemTooltip("Play-mode speed");
+    bool changedSpeed;
+    if (ed.info.isVille) {
+      // A step is 10 game-seconds, so steps/s * 10 = game-seconds per second.
+      float gameMinPerSec = ed.roundsPerSecond / 6.0f;
+      changedSpeed = ImGui::SliderFloat("##speed", &gameMinPerSec, 0.2f, 200.0f, "%.1f game-min / s", ImGuiSliderFlags_Logarithmic);
+      if (changedSpeed) ed.roundsPerSecond = gameMinPerSec * 6.0f;
+    } else {
+      changedSpeed = ImGui::SliderFloat("##speed", &ed.roundsPerSecond, 0.5f, 60.0f, "%.1f rounds/s", ImGuiSliderFlags_Logarithmic);
+    }
+    if (changedSpeed) ed.sim.setSpeed(ed.roundsPerSecond);
+    ImGui::SetItemTooltip("Play speed");
     ImGui::SameLine(0, 8);
     int enabled = 0;
     std::string single;
@@ -690,10 +750,15 @@ void drawStatusBar(EditorState& ed) {
       for (auto& a : ed.frames.back()->agents) alive += a.alive;
     bool anyReal = false;
     for (auto& m : ed.settings.roster) anyReal = anyReal || (m.enabled && m.kind != sl::ProviderKind::Mock);
-    std::snprintf(right, sizeof right, "%s  |  Round %d  |  %d/%zu alive  |  %lld calls  %lld tok  %lld err  |  %s  |  %.0f fps",
-                  statusText(ed.info.status), ed.info.round, alive, ed.info.agents.size(), ed.info.calls,
-                  ed.info.promptTokens + ed.info.completionTokens, ed.info.errors,
-                  anyReal ? "Live models" : "Mock (no LLM)", ImGui::GetIO().Framerate);
+    if (ed.info.isVille)
+      std::snprintf(right, sizeof right, "%s  |  %s  |  %zu residents  |  %lld model calls  %lld err  |  %s  |  %.0f fps",
+                    statusText(ed.info.status), ed.info.clock.c_str(), ed.info.agents.size(), ed.info.calls, ed.info.errors,
+                    anyReal ? "LLM cognition" : "Offline persona model (no LLM)", ImGui::GetIO().Framerate);
+    else
+      std::snprintf(right, sizeof right, "%s  |  Round %d  |  %d/%zu alive  |  %lld calls  %lld tok  %lld err  |  %s  |  %.0f fps",
+                    statusText(ed.info.status), ed.info.round, alive, ed.info.agents.size(), ed.info.calls,
+                    ed.info.promptTokens + ed.info.completionTokens, ed.info.errors,
+                    anyReal ? "Live models" : "Mock (no LLM)", ImGui::GetIO().Framerate);
     float w = ImGui::CalcTextSize(right).x;
     ImGui::SameLine(ImGui::GetWindowWidth() - w - 10);
     ImGui::TextDisabled("%s", right);
@@ -712,11 +777,11 @@ void buildDefaultLayout(EditorState& ed, ImGuiID dockId) {
   right = ImGui::DockBuilderSplitNode(main, ImGuiDir_Right, 0.24f, nullptr, &main);
   bottom = ImGui::DockBuilderSplitNode(main, ImGuiDir_Down, 0.30f, nullptr, &main);
   left = ImGui::DockBuilderSplitNode(main, ImGuiDir_Left, 0.22f, nullptr, &main);
-  ImGui::DockBuilderDockWindow("Hierarchy", left);
-  ImGui::DockBuilderDockWindow("Scene", main);
+  ImGui::DockBuilderDockWindow("Town", left);
+  ImGui::DockBuilderDockWindow("World", main);
   ImGui::DockBuilderDockWindow("Inspector", right);
-  ImGui::DockBuilderDockWindow("Project", bottom);
-  ImGui::DockBuilderDockWindow("Console", bottom);
+  ImGui::DockBuilderDockWindow("Scenarios", bottom);
+  ImGui::DockBuilderDockWindow("Activity", bottom);
   ImGui::DockBuilderFinish(dockId);
   ed.sceneDockId = main;
 }
@@ -739,9 +804,9 @@ void drawAbout(EditorState& ed) {
     ImGui::EndGroup();
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Runs .sl games with a native interpreter. Out of the box every agent is answered by a mock model "
-        "that picks randomly -- enable real models (your own API keys) or a local LLM (Ollama, LM Studio) "
-        "in Model Settings.");
+        "Simulates Generative Agents towns (Park et al. 2023) at scale, and runs SocialLang .sl games. "
+        "Offline, residents think with a persona-driven model and .sl agents with a random mock; enable real "
+        "models (your own API keys) or a local LLM (Ollama, LM Studio) in Model Settings.");
     ImGui::Spacing();
     ImGui::TextDisabled("Dear ImGui %s  |  %s", IMGUI_VERSION, ed.assetsDir.string().c_str());
     ImGui::Spacing();
@@ -771,9 +836,17 @@ void drawEditor(EditorState& ed) {
     ed.viewFrame = 0;
   }
   ed.info = ed.sim.info();
+  if (ed.frames.size() > 6000) {
+    size_t drop = ed.frames.size() - 4000;
+    ed.frames.erase(ed.frames.begin(), ed.frames.begin() + static_cast<long long>(drop));
+    ed.viewFrame = std::max(0, ed.viewFrame - static_cast<int>(drop));
+  }
   if (!ed.launch.select.empty() && !ed.info.agents.empty()) {  // --select, once the run exists
     int a = seatIndex(ed, ed.launch.select);
-    if (a >= 0) ed.sel = {SelKind::Agent, a};
+    if (a >= 0) {
+      ed.sel = {SelKind::Agent, a};
+      ed.frameSelection = true;
+    }
     ed.launch.select.clear();
   }
   if (ed.followLatest && !ed.frames.empty()) ed.viewFrame = static_cast<int>(ed.frames.size()) - 1;
@@ -785,7 +858,7 @@ void drawEditor(EditorState& ed) {
   drawStatusBar(ed);
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGuiID dockId = ImGui::GetID("SocialSandboxDock");
+  ImGuiID dockId = ImGui::GetID("SocialSandboxDock.v2");
   if (ed.resetLayout || !ImGui::DockBuilderGetNode(dockId)) {
     buildDefaultLayout(ed, dockId);
     ed.resetLayout = false;

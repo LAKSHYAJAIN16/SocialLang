@@ -151,7 +151,17 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
 
   ed->fonts.ui = loadFont("C:\\Windows\\Fonts\\segoeui.ttf", 15.0f);
   if (!ed->fonts.ui) ed->fonts.ui = io.Fonts->AddFontDefault();
+  // Emoji (the residents' activity bubbles) come from Segoe UI Emoji, merged
+  // into the UI fonts; stb_truetype renders them as monochrome outlines.
+  auto mergeEmoji = [&] {
+    if (GetFileAttributesA("C:\\Windows\\Fonts\\seguiemj.ttf") == INVALID_FILE_ATTRIBUTES) return;
+    ImFontConfig cfg;
+    cfg.MergeMode = true;
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", 15.0f, &cfg);
+  };
+  mergeEmoji();
   ed->fonts.bold = loadFont("C:\\Windows\\Fonts\\segoeuib.ttf", 15.0f);
+  if (ed->fonts.bold) mergeEmoji();
   if (!ed->fonts.bold) ed->fonts.bold = ed->fonts.ui;
   ed->fonts.mono = loadFont("C:\\Windows\\Fonts\\consola.ttf", 14.0f);
   if (!ed->fonts.mono) ed->fonts.mono = ed->fonts.ui;

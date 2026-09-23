@@ -13,6 +13,7 @@
 
 #include "engine/interpreter.h"
 #include "providers/settings.h"
+#include "ville/sim.h"
 
 namespace app {
 
@@ -39,6 +40,12 @@ struct AgentDetail {
   int planCursor = 0;
   std::vector<std::string> subplan;
   int subplanCursor = 0;
+  // The Ville: a resident's full generative-agent state.
+  std::string action, emoji, address, utterance, innate, learned, currently, lifestyle, homeName, workName;
+  std::vector<std::string> dailyPlan, knows;
+  std::vector<std::pair<int, std::string>> memories;  // (type: 0 event, 1 chat, 2 thought, text), newest first
+  std::vector<std::pair<std::string, float>> relations;
+  int chatWith = -1, memoryCount = 0;
 };
 
 struct AgentStatic {
@@ -62,6 +69,13 @@ struct SimInfo {
   std::vector<sl::Location> locations;
   std::shared_ptr<const std::vector<AgentDetail>> details;
   std::vector<std::string> rosterLabels;
+  // The Ville
+  bool isVille = false;
+  std::string clock;
+  long long step = 0;
+  std::shared_ptr<const ville::World> villeWorld;      // map + objects (states as of the last snapshot)
+  std::shared_ptr<const std::vector<char>> objectBusy;  // per object: in use right now
+  int population = 0;
 };
 
 class SimController {
@@ -72,6 +86,8 @@ class SimController {
   // Parses and sets up a fresh run (round 0). On a compile or setup error the
   // status becomes CompileError and the message is in info().error.
   void load(const std::string& source, uint32_t seed, const sl::Settings& settings);
+  // The Ville (Generative Agents' Smallville) with `population` residents.
+  void loadVille(int population, uint32_t seed, const sl::Settings& settings);
   void reset();  // same source, seed, and roster
   void clear();
 
@@ -99,6 +115,10 @@ class SimController {
   bool quit_ = false;
 
   std::shared_ptr<sl::Interpreter> interp_;
+  std::shared_ptr<ville::Ville> ville_;
+  int villePopulation_ = 0;
+  double lastDetailCapture_ = 0;
+  void captureVille(const ville::Ville& v, bool withDetails);
   std::vector<sl::RosterEntry> roster_;
   unsigned generation_ = 0, drainedGeneration_ = 0;
 

@@ -49,7 +49,7 @@ void locationIconFn(EditorState& ed, int, float s) { locationIcon(ed, s); }
 
 void drawHierarchy(EditorState& ed) {
   static std::string search;
-  if (!beginPanel("Hierarchy", &ed.showHierarchy)) {
+  if (!beginPanel("Town", &ed.showHierarchy)) {
     ImGui::End();
     return;
   }
@@ -60,8 +60,8 @@ void drawHierarchy(EditorState& ed) {
   ImGui::BeginChild("##tree", ImVec2(0, 0), ImGuiChildFlags_None);
   const SimInfo& info = ed.info;
   if (info.status == SimStatus::Empty || (info.status == SimStatus::CompileError && info.agents.empty())) {
-    ImGui::TextDisabled(info.status == SimStatus::CompileError ? "Fix the compile error to see the scene."
-                                                               : "Open a game from the Project panel.");
+    ImGui::TextDisabled(info.status == SimStatus::CompileError ? "Fix the script's errors to see the town."
+                                                               : "Pick a scenario in the Scenarios panel.");
     ImGui::EndChild();
     ImGui::End();
     return;
@@ -90,7 +90,8 @@ void drawHierarchy(EditorState& ed) {
     for (auto& a : frame->agents)
       if (a.location >= 0 && a.location < (int)occupancy.size()) ++occupancy[a.location];
   if (!info.locations.empty()) {
-    if (ImGui::TreeNodeEx("##world", base, "World  (%zu locations)", info.locations.size())) {
+    if (ImGui::TreeNodeEx("##world", base | (info.isVille ? ImGuiTreeNodeFlags_DefaultOpen : 0),
+                          info.isVille ? "Places  (%zu rooms)" : "World  (%zu locations)", info.locations.size())) {
       std::map<std::string, std::vector<int>> byType;
       for (size_t i = 0; i < info.locations.size(); ++i)
         if (matches(info.locations[i].id, search)) byType[info.locations[i].type].push_back(static_cast<int>(i));
@@ -128,8 +129,11 @@ void drawHierarchy(EditorState& ed) {
   int alive = 0;
   if (frame)
     for (auto& a : frame->agents) alive += a.alive;
-  if (ImGui::TreeNodeEx("##agents", base | ImGuiTreeNodeFlags_DefaultOpen, "Agents  (%d alive / %zu)", alive,
-                        info.agents.size())) {
+  bool residentsOpen = info.isVille
+                           ? ImGui::TreeNodeEx("##agents", base | ImGuiTreeNodeFlags_DefaultOpen, "Residents  (%zu)", info.agents.size())
+                           : ImGui::TreeNodeEx("##agents", base | ImGuiTreeNodeFlags_DefaultOpen, "Agents  (%d alive / %zu)", alive,
+                                               info.agents.size());
+  if (residentsOpen) {
     ImGuiListClipper clip;
     clip.Begin(static_cast<int>(shown.size()));
     while (clip.Step())
@@ -139,6 +143,10 @@ void drawHierarchy(EditorState& ed) {
         bool dead = frame && i < (int)frame->agents.size() && !frame->agents[i].alive;
         std::string suffix = teamRevealed(ed, i) ? a.role : "role hidden";
         if (dead) suffix += "  - eliminated";
+        if (info.isVille && info.details && i < (int)info.details->size()) {
+          const AgentDetail& d = (*info.details)[i];
+          suffix = d.emoji + " " + d.action;
+        }
         bool sel = ed.sel.kind == SelKind::Agent && ed.sel.index == i;
         if (row(ed, a.seat.c_str(), sel, agentIconFn, i, a.seat.c_str(), suffix.c_str(), dead))
           ed.sel = {SelKind::Agent, i};

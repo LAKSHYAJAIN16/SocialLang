@@ -8,6 +8,7 @@
 #include <future>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "app/sim_controller.h"
@@ -65,7 +66,9 @@ struct EditorState {
   // Assets (the Project panel): every .sl file in the games folder.
   std::filesystem::path assetsDir;
   std::vector<Asset> assets;
-  int activeAsset = -1;  // loaded into the Scene
+  int activeAsset = -1;  // loaded into the World view
+  int villePopulation = 0;  // > 0 while The Ville is loaded
+  std::unordered_map<std::string, int> nameIndex;  // resident name -> index (The Ville)
   uint32_t seed = 1;
 
   // Latest snapshot from the worker, refreshed once per frame.
@@ -111,6 +114,7 @@ struct EditorState {
     std::string game, select;
     int steps = 0;
     bool toEnd = false, light = false, settings = false;
+    int ville = 0;  // --ville N
     uint32_t seed = 1;
   } launch;
 
@@ -124,6 +128,8 @@ void initEditor(EditorState& ed);
 void drawEditor(EditorState& ed);
 void applyTheme(EditorState& ed);
 void loadAsset(EditorState& ed, int index);
+void loadVille(EditorState& ed, int population);
+std::string villeClockForStep(long long step);
 bool saveAsset(EditorState& ed, int index);
 void refreshAssets(EditorState& ed);
 void newScript(EditorState& ed);

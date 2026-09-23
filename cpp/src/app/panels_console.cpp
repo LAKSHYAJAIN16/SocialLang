@@ -23,10 +23,10 @@ const std::vector<KindGroup>& groups() {
   using sl::LogKind;
   static const std::vector<KindGroup> g = {
       {"Talk", "Dialogue between agents (converse)", LogKind::Dialogue, {LogKind::Dialogue}},
-      {"Town", "Broadcasts, whispers, and eliminations", LogKind::Broadcast, {LogKind::Broadcast, LogKind::Whisper}},
+      {"News", "Town news spreading (who heard what from whom), broadcasts, whispers, eliminations", LogKind::Whisper, {LogKind::Broadcast, LogKind::Whisper}},
       {"Reflect", "Reflections -- higher-level insights an agent drew", LogKind::Reflection, {LogKind::Reflection}},
       {"Plans", "Plans made with make_plan", LogKind::Plan, {LogKind::Plan}},
-      {"Asks", "Private questions to one agent (ask / react) and notes", LogKind::Ask, {LogKind::Ask, LogKind::Note}},
+      {"Actions", "What residents start doing (the town logs this below 200 residents), and private asks", LogKind::Note, {LogKind::Ask, LogKind::Note}},
       {"Print", "print() output from the script", LogKind::Print, {LogKind::Print}},
       {"Errors", "Script errors and failed model calls", LogKind::Error, {LogKind::Error}},
   };
@@ -43,7 +43,7 @@ bool containsCI(const std::string& hay, const std::string& needle) {
 }  // namespace
 
 void drawConsole(EditorState& ed) {
-  if (!beginPanel("Console", &ed.showConsole)) {
+  if (!beginPanel("Activity", &ed.showConsole)) {
     ImGui::End();
     return;
   }
@@ -153,7 +153,8 @@ void drawConsole(EditorState& ed) {
       ImGui::SetCursorPos(start);
       kindIcon(ed, e.kind, lh);
       ImGui::SameLine();
-      ImGui::TextDisabled("R%-3d", e.round);
+      if (ed.info.isVille) ImGui::TextDisabled("%s", villeClockForStep(e.round).substr(4).c_str());
+      else ImGui::TextDisabled("R%-3d", e.round);
       ImGui::SameLine();
       if (!e.author.empty()) {
         ImGui::PushFont(ed.fonts.bold, 0.0f);
@@ -181,8 +182,12 @@ void drawConsole(EditorState& ed) {
     const sl::LogEntry& e = ed.log[ed.selectedLog];
     ImGui::Separator();
     ImGui::BeginChild("##detail", ImVec2(0, 0), ImGuiChildFlags_None);
-    ImGui::TextDisabled("Round %d  |  %s%s%s", e.round, sl::logKindName(e.kind), e.author.empty() ? "" : "  |  by ",
-                        e.author.c_str());
+    if (ed.info.isVille)
+      ImGui::TextDisabled("%s  |  %s%s%s", villeClockForStep(e.round).c_str(), sl::logKindName(e.kind),
+                          e.author.empty() ? "" : "  |  ", e.author.c_str());
+    else
+      ImGui::TextDisabled("Round %d  |  %s%s%s", e.round, sl::logKindName(e.kind), e.author.empty() ? "" : "  |  by ",
+                          e.author.c_str());
     if (!e.visibleTo.empty()) {
       std::string who;
       for (size_t k = 0; k < e.visibleTo.size() && k < 12; ++k)
