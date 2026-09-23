@@ -179,34 +179,66 @@ void refreshAssets(EditorState& ed) {
       a.path = entry.path();
       a.saved = readFile(a.path);
       a.text = a.saved;
+      std::string k = ville::slFileKind(a.saved);
+      a.kind = k == "environment" || k == "behavior" ? k : "game";
+      if (a.kind == "environment") {
+        try {
+          auto env = ville::parseEnvironment(a.saved);
+          size_t n = env.residents.size() + static_cast<size_t>(std::max(0, env.generate.residents));
+          a.detail = std::to_string(n) + " residents, " + (env.behavior.empty() ? "no behavior file" : env.behavior);
+        } catch (const std::exception& e) {
+          a.detail = e.what();
+        }
+      }
       // Keep unsaved edits and open tabs across a refresh.
       for (auto& old : ed.assets) {
         if (old.path == a.path) {
-          a.text = old.text;
+          if (old.dirty()) a.text = old.text;
           a.scriptOpen = old.scriptOpen;
         }
       }
       next.push_back(std::move(a));
     }
   }
-  // The two Smallville-engine games lead, then alphabetical.
-  auto rank = [](const std::string& n) { return n == "smallville_mafia.sl" ? 0 : n == "smallville.sl" ? 1 : 2; };
+  // Towns lead, then their behavior files, then games; alphabetical within.
+  auto rank = [](const Asset& a) { return a.kind == "environment" ? 0 : a.kind == "behavior" ? 1 : 2; };
   std::sort(next.begin(), next.end(), [&](const Asset& x, const Asset& y) {
-    return rank(x.name) != rank(y.name) ? rank(x.name) < rank(y.name) : x.name < y.name;
+    return rank(x) != rank(y) ? rank(x) < rank(y) : x.name < y.name;
   });
-  std::string activePath = ed.activeAsset >= 0 && ed.activeAsset < (int)ed.assets.size()
-                               ? ed.assets[ed.activeAsset].path.string()
-                               : "";
+  auto pathOf = [&](int i) { return i >= 0 && i < (int)ed.assets.size() ? ed.assets[i].path.string() : ""; };
+  std::string activePath = pathOf(ed.activeAsset), townPath = pathOf(ed.townAsset);
   ed.assets = std::move(next);
-  ed.activeAsset = -1;
-  for (size_t i = 0; i < ed.assets.size(); ++i)
+  ed.activeAsset = ed.townAsset = -1;
+  for (size_t i = 0; i < ed.assets.size(); ++i) {
     if (ed.assets[i].path.string() == activePath) ed.activeAsset = static_cast<int>(i);
+    if (ed.assets[i].path.string() == townPath) ed.townAsset = static_cast<int>(i);
+  }
 }
 
 void loadAsset(EditorState& ed, int index) {
   if (index < 0 || index >= (int)ed.assets.size()) return;
-  if (ed.villePopulation > 0 && ed.roundsPerSecond > 60) ed.roundsPerSecond = 4;
-  ed.villePopulation = 0;
+  const Asset& a = ed.assets[index];
+  if (a.kind == "environment") {
+    loadTown(ed, index);
+    return;
+  }
+  if (a.kind == "behavior") {  // run the first town that uses these behaviors
+    for (size_t i = 0; i < ed.assets.size(); ++i) {
+      if (ed.assets[i].kind != "environment") continue;
+      try {
+        auto env = ville::parseEnvironment(ed.assets[i].saved);
+        if (env.behavior == a.name) {
+          loadTown(ed, static_cast<int>(i));
+          return;
+        }
+      } catch (...) {
+      }
+    }
+    notify(ed, "No environment file uses " + a.name + " yet (behavior: \"" + a.name + "\")");
+    return;
+  }
+  if (ed.townAsset >= 0 && ed.roundsPerSecond > 60) ed.roundsPerSecond = 4;
+  ed.townAsset = -1;
   ed.nameIndex.clear();
   ed.activeAsset = index;
   ed.playMode = false;
@@ -218,11 +250,21 @@ void loadAsset(EditorState& ed, int index) {
   ed.selectedLog = -1;
 }
 
-void loadVille(EditorState& ed, int population) {
-  ed.villePopulation = population;
-  ed.activeAsset = -1;
+bool loadTown(EditorState& ed, int index) {
+  if (index < 0 || index >= (int)ed.assets.size()) return false;
+  ville::TownSpec spec;
+  try {
+    spec = ville::TownSpec::load(ed.assets[index].path.string());
+  } catch (const std::exception& e) {
+    notify(ed, e.what());
+    return false;
+  }
+  if (ed.townAsset < 0 && ed.roundsPerSecond < 10) ed.roundsPerSecond = 30;
+  ed.townSpec = std::move(spec);
+  ed.townAsset = index;
+  ed.activeAsset = index;
   ed.playMode = false;
-  ed.sim.loadVille(population, ed.seed, ed.settings, ed.townSpec);
+  ed.sim.loadTown(ed.townSpec, ed.settings);
   ed.info = ed.sim.info();
   ed.nameIndex.clear();
   for (size_t i = 0; i < ed.info.agents.size(); ++i) ed.nameIndex[ed.info.agents[i].seat] = static_cast<int>(i);
@@ -230,17 +272,27 @@ void loadVille(EditorState& ed, int population) {
   ed.fitView = true;
   ed.followLatest = true;
   ed.selectedLog = -1;
-  if (ed.roundsPerSecond < 10) ed.roundsPerSecond = 30;
+  return true;
 }
 
-std::string villeClockForStep(long long step) {
-  static const char* kDays[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
-  long long minutes = 6 * 60 + step * ville::kSecondsPerStep / 60;
-  int d = static_cast<int>(minutes / 1440), m = static_cast<int>(minutes % 1440);
-  char buf[48];
-  std::snprintf(buf, sizeof buf, "%s Feb %d, %d:%02d %s", kDays[d % 7], 13 + d, (m / 60) % 12 == 0 ? 12 : (m / 60) % 12,
-                m % 60, m < 720 ? "am" : "pm");
-  return buf;
+void saveTown(EditorState& ed) {
+  if (ed.townAsset < 0) return;
+  try {
+    ed.townSpec.save();
+  } catch (const std::exception& e) {
+    notify(ed, e.what());
+    return;
+  }
+  refreshAssets(ed);  // the script tabs show the rewritten files
+  Selection sel = ed.sel;
+  loadTown(ed, ed.townAsset);
+  ed.sel = sel;
+  ed.fitView = false;
+}
+
+std::string villeClockForStep(const EditorState& ed, long long step) {
+  if (!ed.info.env) return "";
+  return ville::clockFor(*ed.info.env, step, true);
 }
 
 bool saveAsset(EditorState& ed, int index) {
@@ -252,8 +304,20 @@ bool saveAsset(EditorState& ed, int index) {
     return false;
   }
   out << a.text;
+  out.close();
   a.saved = a.text;
+  std::string k = ville::slFileKind(a.saved);
+  a.kind = k == "environment" || k == "behavior" ? k : "game";
   notify(ed, "Saved " + a.name);
+  // Saving a file the running town is built from rebuilds the town.
+  if (ed.townAsset >= 0) {
+    std::error_code ec;
+    auto same = [&](const std::string& p) { return !p.empty() && fs::equivalent(a.path, p, ec); };
+    if (same(ed.townSpec.envPath) || same(ed.townSpec.behaviorPath)) {
+      Selection sel = ed.sel;
+      if (loadTown(ed, ed.townAsset)) ed.sel = sel;
+    }
+  }
   return true;
 }
 
@@ -281,18 +345,17 @@ void initEditor(EditorState& ed) {
   ed.settings = sl::Settings::load();
   ed.settingsDraft = ed.settings;
   ed.assetsDir = resolveAssetsDir();
-  ed.townSpecPath = (ed.assetsDir / "the_ville.town.json").string();
-  ed.townSpec = ville::TownSpec::load(ed.townSpecPath);
   ed.dark = !ed.launch.light;
   ed.seed = ed.launch.seed;
   applyTheme(ed);
   refreshAssets(ed);
-  int first = 0;
+  // --town / --game pick a file; otherwise the first town in the folder.
+  int first = -1;
+  std::string want = !ed.launch.town.empty() ? ed.launch.town : ed.launch.game;
   for (size_t i = 0; i < ed.assets.size(); ++i)
-    if (ed.assets[i].name == ed.launch.game) first = static_cast<int>(i);
-  if (ed.launch.ville > 0) loadVille(ed, ed.launch.ville);
-  else if (!ed.launch.game.empty() && !ed.assets.empty()) loadAsset(ed, first);
-  else loadVille(ed, 25);  // The Ville is the default scenario
+    if (ed.assets[i].name == want) first = static_cast<int>(i);
+  if (first < 0 && want.empty() && ed.assets.size() && ed.assets[0].kind == "environment") first = 0;
+  if (first >= 0) loadAsset(ed, first);
   if (ed.launch.toEnd) {
     ed.playMode = true;
     ed.sim.runToEnd();
@@ -436,7 +499,7 @@ void parseLaunchArgs(EditorState& ed, int argc, wchar_t** argv) {
     else if (a == "--to-end") ed.launch.toEnd = true;
     else if (a == "--light") ed.launch.light = true;
     else if (a == "--settings") ed.launch.settings = true;
-    else if (a == "--ville") ed.launch.ville = std::atoi(next().c_str());
+    else if (a == "--town") ed.launch.town = next();
     else if (a == "--building") ed.launch.building = next();
   }
 }
@@ -609,20 +672,20 @@ void drawToolbar(EditorState& ed) {
     ImGui::Dummy(ImVec2(24, 24));
     ImGui::SameLine(0, 10);
     ImGui::SetNextItemWidth(210);
-    std::string current = ed.villePopulation > 0 ? "The Ville - " + std::to_string(ed.villePopulation) + " residents"
+    std::string current = ed.townAsset >= 0 ? ed.townSpec.env.name + " - " + std::to_string(ed.info.population) + " residents"
                           : ed.activeAsset >= 0 ? ed.assets[ed.activeAsset].name
                                                 : "No scenario loaded";
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1);
     if (ImGui::BeginCombo("##game", current.c_str())) {
-      ImGui::TextDisabled("The Ville (Generative Agents)");
-      for (int pop : {25, 250, 1000, 5000}) {
-        std::string label = "The Ville - " + std::to_string(pop) + " residents" + (pop == 25 ? " (the paper's cast)" : "");
-        if (ImGui::Selectable(label.c_str(), ed.villePopulation == pop)) loadVille(ed, pop);
-      }
-      ImGui::Separator();
-      ImGui::TextDisabled("SocialLang games");
+      ImGui::TextDisabled("Towns");
       for (size_t i = 0; i < ed.assets.size(); ++i)
-        if (ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.activeAsset)) loadAsset(ed, (int)i);
+        if (ed.assets[i].kind == "environment" && ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.townAsset))
+          loadAsset(ed, (int)i);
+      ImGui::Separator();
+      ImGui::TextDisabled("Games");
+      for (size_t i = 0; i < ed.assets.size(); ++i)
+        if (ed.assets[i].kind == "game" && ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.activeAsset))
+          loadAsset(ed, (int)i);
       ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Scenario loaded into the World view");
@@ -642,7 +705,7 @@ void drawToolbar(EditorState& ed) {
     if (iconButton(ed, "##step", Icon::Step, false, canStep, "Step one round (Ctrl+Alt+P)")) stepOnce(ed);
     ImGui::SameLine(0, 12);
     if (iconButton(ed, "##toend", Icon::FastForward, false, canStep,
-                   ed.villePopulation > 0 ? "Fast-forward: simulate as fast as the machine allows" : "Run to the end as fast as possible")) {
+                   ed.townAsset >= 0 ? "Fast-forward: simulate as fast as the machine allows" : "Run to the end as fast as possible")) {
       ed.playMode = true;
       ed.followLatest = true;
       ed.sim.runToEnd();
@@ -809,7 +872,7 @@ void drawAbout(EditorState& ed) {
     ImGui::EndGroup();
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Simulates Generative Agents towns (Park et al. 2023) at scale, and runs SocialLang .sl games. "
+        "Simulates towns of residents who plan, remember, talk, and reflect, at scale, and runs SocialLang .sl games. "
         "Offline, residents think with a persona-driven model and .sl agents with a random mock; enable real "
         "models (your own API keys) or a local LLM (Ollama, LM Studio) in Model Settings.");
     ImGui::Spacing();

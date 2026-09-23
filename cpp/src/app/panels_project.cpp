@@ -14,24 +14,8 @@ void drawProject(EditorState& ed) {
     ImGui::End();
     return;
   }
-  // The Ville: Generative Agents' town, at whatever size the machine handles.
   ImGui::PushFont(ed.fonts.bold, 0.0f);
-  ImGui::TextUnformatted("The Ville");
-  ImGui::PopFont();
-  ImGui::SameLine();
-  ImGui::TextDisabled("Generative Agents (Park et al. 2023) -- residents plan, remember, talk, and reflect");
-  for (int pop : {25, 250, 1000, 5000}) {
-    bool active = ed.villePopulation == pop;
-    std::string label = std::to_string(pop) + (pop == 25 ? " residents\nthe paper's cast" : " residents\ngenerated town");
-    ImGui::PushStyleColor(ImGuiCol_Button, active ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(label.c_str(), ImVec2(150, ImGui::GetTextLineHeight() * 2 + ImGui::GetStyle().FramePadding.y * 2 + 6))) loadVille(ed, pop);
-    ImGui::PopStyleColor();
-    ImGui::SameLine();
-  }
-  ImGui::NewLine();
-  ImGui::Separator();
-  ImGui::PushFont(ed.fonts.bold, 0.0f);
-  ImGui::TextUnformatted("SocialLang games");
+  ImGui::TextUnformatted("Scenarios");
   ImGui::PopFont();
   ImGui::SameLine();
   ImGui::TextDisabled("%s", ed.assetsDir.string().c_str());
@@ -58,9 +42,30 @@ void drawProject(EditorState& ed) {
   float tile = ed.projectTileSize;
   float cellW = tile + 28;
   int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cellW));
+  // Three shelves: towns (environment files), the behavior files they use, and games.
+  struct Shelf {
+    const char* kind;
+    const char* title;
+    const char* hint;
+  };
+  static const Shelf kShelves[] = {
+      {"environment", "Towns", "environment files: buildings, residents, relationships, events. Double-click to run."},
+      {"behavior", "Behaviors", "behavior files: social rules, routines, activities. A town names the one it uses."},
+      {"game", "Games", "SocialLang game scripts"},
+  };
+  for (const Shelf& shelf : kShelves) {
+  int shown = 0;
   for (size_t i = 0; i < ed.assets.size(); ++i) {
     Asset& a = ed.assets[i];
-    int col = static_cast<int>(i) % cols;
+    if (a.kind != shelf.kind) continue;
+    if (shown == 0) {
+      ImGui::PushFont(ed.fonts.bold, 0.0f);
+      ImGui::TextUnformatted(shelf.title);
+      ImGui::PopFont();
+      ImGui::SameLine();
+      ImGui::TextDisabled("%s", shelf.hint);
+    }
+    int col = shown++ % cols;
     if (col) ImGui::SameLine(col * cellW);
     ImGui::PushID(static_cast<int>(i));
     ImGui::BeginGroup();
@@ -74,7 +79,7 @@ void drawProject(EditorState& ed) {
     if (selected || hovered)
       dl->AddRectFilled(p, ImVec2(p.x + cellW - 8, p.y + tile + labelH),
                         ImGui::GetColorU32(selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered), 3);
-    scriptIcon(ed, ImVec2(p.x + (cellW - 8 - tile) * 0.5f, p.y + 2), tile - 4, (int)i == ed.activeAsset);
+    scriptIcon(ed, ImVec2(p.x + (cellW - 8 - tile) * 0.5f, p.y + 2), tile - 4, (int)i == ed.activeAsset || (int)i == ed.townAsset);
     // Name, wrapped to two lines, centered; a dot marks unsaved edits.
     std::string label = (a.dirty() ? "* " : "") + a.name;
     float wrap = cellW - 12;
@@ -82,7 +87,9 @@ void drawProject(EditorState& ed) {
     ImVec2 tp(p.x + (cellW - 8 - ts.x) * 0.5f, p.y + tile + 2);
     dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), tp,
                 selected ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImGuiCol_Text), label.c_str(), nullptr, wrap);
-    if (hovered) ImGui::SetTooltip("%s\nDouble-click to load it", a.path.string().c_str());
+    if (hovered)
+      ImGui::SetTooltip("%s%s%s\nDouble-click to %s", a.path.string().c_str(), a.detail.empty() ? "" : "\n",
+                        a.detail.c_str(), a.kind == "behavior" ? "run a town that uses it" : "load it");
     if (ImGui::BeginPopupContextItem("##ctx")) {
       if (ImGui::MenuItem("Load")) loadAsset(ed, (int)i);
       if (ImGui::MenuItem("Edit Script")) {
@@ -99,6 +106,8 @@ void drawProject(EditorState& ed) {
     }
     ImGui::EndGroup();
     ImGui::PopID();
+  }
+  if (shown) ImGui::Spacing();
   }
   ImGui::EndChild();
   ImGui::End();

@@ -91,7 +91,7 @@ bool toggleChip(const char* label, bool* v) {
 }
 
 
-// ---- The Ville: tile map, buildings, residents, bubbles.
+// ---- Towns: tile map, buildings, residents, bubbles.
 
 ImU32 rgb(unsigned c, int a = 255) { return IM_COL32((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, a); }
 
@@ -309,7 +309,7 @@ int drawVille(EditorState& ed, ImDrawList* dl, const View& v, const Frame& frame
       dl->AddTriangleFilled(ImVec2(p.x - 4, b.y), ImVec2(p.x + 4, b.y), ImVec2(p.x, b.y + 5), IM_COL32(255, 255, 255, 240));
       dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(a.x + 6, a.y + 4), IM_COL32(20, 20, 20, 255), text.c_str(), nullptr, wrap);
     } else {
-      // Emoji + what they're doing, like the paper's replay.
+      // Emoji + what they're doing.
       std::string text = d.emoji + " " + shortText(d.action, selected ? 60 : 28);
       pill(dl, ImVec2(p.x, p.y - r * 1.25f - 8), text.c_str(), IM_COL32(20, 20, 24, 215), IM_COL32(250, 250, 250, 255));
     }
@@ -605,7 +605,7 @@ void drawScene(EditorState& ed) {
   int vf = std::clamp(ed.viewFrame, 0, maxFrame);
   int shownRound = ed.frames.empty() ? 0 : ed.frames[vf]->round;
   char fmt[48];
-  if (info.isVille) std::snprintf(fmt, sizeof fmt, "%s", villeClockForStep(shownRound).c_str());
+  if (info.isVille) std::snprintf(fmt, sizeof fmt, "%s", villeClockForStep(ed, shownRound).c_str());
   else std::snprintf(fmt, sizeof fmt, "Round %d", shownRound);
   ImGui::BeginDisabled(ed.frames.size() <= 1);
   if (ImGui::SliderInt("##timeline", &vf, 0, maxFrame, fmt)) {

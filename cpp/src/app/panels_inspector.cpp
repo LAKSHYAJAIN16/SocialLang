@@ -106,7 +106,7 @@ void recentActivity(EditorState& ed, int agent, size_t logEnd, int max) {
 }
 
 
-// ---- The Ville: a resident's generative-agent state, and a room.
+// ---- Towns: a resident's state (memory, plan, reflections), and a room.
 
 void wrapped(const std::string& s) {
   ImGui::PushTextWrapPos(0);

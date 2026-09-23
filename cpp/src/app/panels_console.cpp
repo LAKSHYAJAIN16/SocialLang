@@ -153,7 +153,7 @@ void drawConsole(EditorState& ed) {
       ImGui::SetCursorPos(start);
       kindIcon(ed, e.kind, lh);
       ImGui::SameLine();
-      if (ed.info.isVille) ImGui::TextDisabled("%s", villeClockForStep(e.round).substr(4).c_str());
+      if (ed.info.isVille) ImGui::TextDisabled("%s", villeClockForStep(ed, e.round).c_str());
       else ImGui::TextDisabled("R%-3d", e.round);
       ImGui::SameLine();
       if (!e.author.empty()) {
@@ -183,7 +183,7 @@ void drawConsole(EditorState& ed) {
     ImGui::Separator();
     ImGui::BeginChild("##detail", ImVec2(0, 0), ImGuiChildFlags_None);
     if (ed.info.isVille)
-      ImGui::TextDisabled("%s  |  %s%s%s", villeClockForStep(e.round).c_str(), sl::logKindName(e.kind),
+      ImGui::TextDisabled("%s  |  %s%s%s", villeClockForStep(ed, e.round).c_str(), sl::logKindName(e.kind),
                           e.author.empty() ? "" : "  |  ", e.author.c_str());
     else
       ImGui::TextDisabled("Round %d  |  %s%s%s", e.round, sl::logKindName(e.kind), e.author.empty() ? "" : "  |  by ",

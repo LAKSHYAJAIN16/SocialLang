@@ -23,6 +23,8 @@ struct Asset {
   std::filesystem::path path;
   std::string text;   // editor buffer
   std::string saved;  // last saved / loaded contents
+  std::string kind;   // "environment", "behavior", or "game"
+  std::string detail; // environment files: "25 residents, oakhill.behavior.sl"
   bool scriptOpen = false;
   bool focusScript = false;
   bool dirty() const { return text != saved; }
@@ -68,10 +70,9 @@ struct EditorState {
   std::filesystem::path assetsDir;
   std::vector<Asset> assets;
   int activeAsset = -1;  // loaded into the World view
-  int villePopulation = 0;  // > 0 while The Ville is loaded
-  std::unordered_map<std::string, int> nameIndex;  // resident name -> index (The Ville)
-  ville::TownSpec townSpec;  // the town's customizations (buildings, residents, relationships, rules)
-  std::string townSpecPath;  // games/the_ville.town.json
+  int townAsset = -1;  // the environment file loaded as a town, or -1
+  std::unordered_map<std::string, int> nameIndex;  // resident name -> index (towns)
+  ville::TownSpec townSpec;  // the loaded town's environment + behavior files, parsed
   bool showRules = true;
   int rulesScope = 0;          // 0 whole town, 1 a group, 2 one resident
   std::string rulesGroup, rulesResident;
@@ -121,7 +122,7 @@ struct EditorState {
     std::string game, select;
     int steps = 0;
     bool toEnd = false, light = false, settings = false;
-    int ville = 0;  // --ville N
+    std::string town;  // --town FILE.env.sl
     std::string building;  // --building NAME: open it in the Inspector
     uint32_t seed = 1;
   } launch;
@@ -136,8 +137,11 @@ void initEditor(EditorState& ed);
 void drawEditor(EditorState& ed);
 void applyTheme(EditorState& ed);
 void loadAsset(EditorState& ed, int index);
-void loadVille(EditorState& ed, int population);
-std::string villeClockForStep(long long step);
+// Load an environment file (and the behavior file it names) as a town.
+bool loadTown(EditorState& ed, int index);
+// Write the edited townSpec back to its two files and rebuild the town.
+void saveTown(EditorState& ed);
+std::string villeClockForStep(const EditorState& ed, long long step);
 bool saveAsset(EditorState& ed, int index);
 void refreshAssets(EditorState& ed);
 void newScript(EditorState& ed);
