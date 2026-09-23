@@ -1,9 +1,8 @@
-// The Ville: a tile-based town in the shape of Generative Agents' Smallville
-// (Park et al. 2023) -- a tree of world > sector (building) > arena (room) >
+// A tile-based town: a tree of world > sector (building) > arena (room) >
 // game object, over a collision grid agents walk on tile by tile.
 //
-// The paper's map is a hand-made 140x100 Tiled map; this one is generated,
-// so the same town can be built for 25 residents or for thousands.
+// Everything about the town comes from its environment file; only the
+// street-grid layout is computed, so a town can hold 25 residents or thousands.
 #pragma once
 
 #include <cstdint>
@@ -51,10 +50,8 @@ struct Sector {
 
 class World {
  public:
-  // Builds a town with room for `population` residents. With 25 it mirrors
-  // the paper's cast of places; beyond that it keeps adding blocks of homes
-  // and businesses.
-  void generate(int population, uint32_t seed, const TownSpec* spec = nullptr);
+  // Lays out the environment's buildings (and generated ones) on a street grid.
+  void generate(const TownSpec& spec);
 
   int width() const { return w_; }
   int height() const { return h_; }
@@ -96,12 +93,12 @@ class World {
   void fill(const Rect& r, Tile t);
   int addSector(const std::string& name, SectorKind kind, const Rect& r, int doorX, int doorY);
   void building(int sector, const std::vector<std::pair<std::string, std::vector<std::string>>>& rooms);
-  void park(int sector, uint32_t seed);
+  void park(int sector, uint32_t seed, const std::vector<std::string>& objects);
 };
 
 const char* sectorKindName(SectorKind k);
 SectorKind sectorKindFromName(const std::string& name, SectorKind fallback);
-// The standard room layout for a kind of building: (room, objects), hall first.
-std::vector<std::pair<std::string, std::vector<std::string>>> defaultRooms(SectorKind k, int bedrooms = 2);
+// A building's rooms from its effective spec: (room, objects), hall first.
+std::vector<std::pair<std::string, std::vector<std::string>>> roomsFromSpec(const BuildingSpec& b);
 
 }  // namespace ville

@@ -1,6 +1,7 @@
-// The Ville simulation: Generative Agents (Park et al. 2023) at scale.
+// The town simulation: generative agents at scale, defined entirely by an
+// environment file and a behavior file (see spec.h).
 //
-// Every agent runs the paper's loop each step (10 game-seconds):
+// Every agent runs this loop each step (10 game-seconds):
 //   perceive  -- nearby agents' actions and object states, within its vision
 //               radius and current arena, become observations in its memory
 //               stream (skipping ones it has recently recorded)
@@ -10,14 +11,14 @@
 //               world:sector:arena:object address, an emoji, and a path
 //   react     -- on seeing someone, decide whether to talk; conversations are
 //               generated turn by turn, grounded in what each agent remembers,
-//               and pass knowledge on (how the Valentine's party invite spreads)
+//               and pass knowledge on (how an event's invitation spreads)
 //   act       -- walk the path one tile per step; objects in use change state
 //   reflect   -- once accumulated importance crosses a threshold, synthesize
 //               higher-level thoughts back into memory
 //
-// Cognition is pluggable: an LLM (the paper's setup, via the provider layer)
-// or an offline persona-driven model for runs far larger than an LLM budget
-// allows (see cognition.h). The simulation is deterministic for a seed.
+// Cognition is pluggable: an LLM through the provider layer, or an offline
+// persona model driven by the behavior file for runs far larger than an LLM
+// budget allows (see cognition.h). The simulation is deterministic for a seed.
 #pragma once
 
 #include <atomic>
@@ -46,19 +47,20 @@ struct MemoryNode {
   NodeType type = NodeType::Event;
   int64_t created = 0, lastAccess = 0;  // steps
   std::string subject, predicate, object, description;
-  float poignancy = 1;  // 1-10, as in the paper
+  float poignancy = 1;  // importance, 1-10
   int news = -1;        // a piece of news this memory carries, if any
   int person = -1;      // the other agent involved, if any
 };
 
 // Something worth passing on: an event invite or a piece of town news.
 struct News {
-  std::string text;  // "Isabella Rodriguez is hosting a Valentine's Day party at Hobbs Cafe on February 14th, 5-7 pm."
+  std::string name;  // the event's name ("" for plain news)
+  std::string text;
   int origin = -1;
   bool invite = false;
   int sector = -1;             // where the event happens
   int day = 0, startMin = 0, endMin = 0;  // day index, minutes since midnight
-  std::string activity;       // "attending Isabella's Valentine's Day party"
+  std::string activity;       // what a guest's schedule says during it
 };
 
 struct Persona {
@@ -104,6 +106,7 @@ struct Agent {
 
   // Conversation
   int chatWith = -1;
+  int chatNews = -1;  // the news this conversation is about, if any
   int64_t chatEnd = 0;
   std::vector<std::pair<int, std::string>> chatLines;  // (speaker, line)
   std::vector<int64_t> chatLineAt;
@@ -136,11 +139,7 @@ struct VilleEvent {  // a log line for the UI
 };
 
 struct VilleOptions {
-  int population = 25;
-  uint32_t seed = 1;
-  int days = 2;                 // the run ends after this many game days
-  int startHour = 6;            // day 1 starts at this hour (Feb 13, 2023)
-  TownSpec spec;                // building / resident customizations and the social rules
+  TownSpec spec;                // the environment + behavior files: everything about the town
   bool parallel = true;         // perceive / plan / move on the worker pool
   bool logActions = true;       // one log line per task start (auto-off past 200 agents)
   int maxConcurrency = 8;
@@ -161,22 +160,24 @@ class Ville {
   int64_t minutesSinceStart() const;
   int dayIndex() const;
   int minuteOfDay() const;
-  std::string clockText() const;  // "Monday, February 13, 2023 -- 08:32 am"
+  std::string clockText() const;  // "Monday, February 13, 2023 -- 8:32 am", from the environment's start date
 
   const World& world() const { return world_; }
   const std::vector<Agent>& agents() const { return agents_; }
   const std::vector<News>& news() const { return news_; }
   const VilleOptions& options() const { return opts_; }
-  const SocialRules& rules() const { return opts_.spec.rules; }
+  const BehaviorSpec& behavior() const { return opts_.spec.behavior; }
+  const EnvironmentSpec& environment() const { return opts_.spec.env; }
+  const SocialRules& rules() const { return opts_.spec.behavior.rules; }
   // The rules one resident follows (their own, their group's, or the town's).
   const SocialRules& rulesFor(int agent) const {
     return opts_.spec.rulesFor(agents_[agent].p.name, agents_[agent].p.archetype);
   }
   // Applied between steps (the caller must not be inside step()).
   void setRules(const TownSpec& spec) {
-    opts_.spec.rules = spec.rules;
-    opts_.spec.groupRules = spec.groupRules;
-    opts_.spec.residentRules = spec.residentRules;
+    opts_.spec.behavior.rules = spec.behavior.rules;
+    opts_.spec.behavior.groupRules = spec.behavior.groupRules;
+    opts_.spec.behavior.residentRules = spec.behavior.residentRules;
   }
   bool llmCognition() const { return llm_; }
 
@@ -216,5 +217,9 @@ class Ville {
   void learn(int i, int news, int from);
   void applyInvites(int i);
 };
+
+// The clock for a step of a town: "Monday, February 13, 2023 -- 8:32 am", or
+// "Mon Feb 13, 8:32 am" short.
+std::string clockFor(const EnvironmentSpec& env, long long step, bool shortForm);
 
 }  // namespace ville

@@ -28,6 +28,7 @@ add_library(sl_engine STATIC
   src/ville/cognition.cpp
   src/ville/sim.cpp
   src/ville/spec.cpp
+  src/ville/config.cpp
 )
 target_include_directories(sl_engine PUBLIC src third_party)
 target_link_libraries(sl_engine PUBLIC winhttp crypt32)

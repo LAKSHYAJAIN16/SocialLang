@@ -16,49 +16,66 @@ std::mutex gEmitMu;
 constexpr int kGridCell = 8;
 
 const char* kDays[] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+const char* kMonths[] = {"January", "February", "March",     "April",   "May",      "June",
+                         "July",    "August",   "September", "October", "November", "December"};
 
 }  // namespace
+
+// Calendar: the environment's start date ("Monday, February 13, 2023"), then
+// day by day from there.
+std::string clockFor(const EnvironmentSpec& env, long long step, bool shortForm) {
+  long long minutes = static_cast<long long>(env.startHour) * 60 + step * kSecondsPerStep / 60;
+  int d = static_cast<int>(minutes / 1440), m = static_cast<int>(minutes % 1440);
+  int weekday = 0, month = 1, day = 1, year = 2023;
+  for (int k = 0; k < 7; ++k)
+    if (env.startDate.find(kDays[k]) != std::string::npos) weekday = k;
+  for (int k = 0; k < 12; ++k)
+    if (env.startDate.find(kMonths[k]) != std::string::npos) month = k;
+  std::sscanf(env.startDate.c_str() + std::min(env.startDate.size(), env.startDate.find(kMonths[month]) + std::string(kMonths[month]).size()),
+              " %d, %d", &day, &year);
+  for (int k = 0; k < d; ++k) {
+    static const int kLen[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    int len = kLen[month] + (month == 1 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    if (++day > len) {
+      day = 1;
+      if (++month > 11) {
+        month = 0;
+        ++year;
+      }
+    }
+  }
+  int h = m / 60, mm = m % 60;
+  char buf[96];
+  if (shortForm)
+    std::snprintf(buf, sizeof buf, "%.3s %.3s %d, %d:%02d %s", kDays[(weekday + d) % 7], kMonths[month], day,
+                  h % 12 == 0 ? 12 : h % 12, mm, h < 12 ? "am" : "pm");
+  else
+    std::snprintf(buf, sizeof buf, "%s, %s %d, %d -- %d:%02d %s", kDays[(weekday + d) % 7], kMonths[month], day, year,
+                  h % 12 == 0 ? 12 : h % 12, mm, h < 12 ? "am" : "pm");
+  return buf;
+}
 
 Ville::Ville(const VilleOptions& opts, const std::vector<std::shared_ptr<sl::Provider>>& roster,
              std::function<void(const VilleEvent&)> sink)
     : opts_(opts), sink_(std::move(sink)), roster_(roster) {
-  if (opts_.population > 200) opts_.logActions = false;
-  world_.generate(opts_.population, opts_.seed, &opts_.spec);
+  world_.generate(opts_.spec);
   for (auto& p : roster_) llm_ = llm_ || p->wantsContext();
   cog_ = llm_ ? makeLlmCognition(opts_.maxConcurrency) : makePersonaCognition();
+  cog_->setBehavior(&opts_.spec.behavior);
   setupAgents();
+  if (agents_.size() > 200) opts_.logActions = false;
 }
 
 Ville::~Ville() = default;
 
 void Ville::setupAgents() {
-  auto personas = makePersonas(world_, opts_.population, opts_.seed);
-  // Resident edits from the town spec.
-  for (auto& p : personas) {
-    auto it = opts_.spec.residents.find(p.name);
-    if (it == opts_.spec.residents.end()) continue;
-    const ResidentSpec& r = it->second;
-    if (!r.innate.empty()) p.innate = r.innate;
-    if (!r.learned.empty()) p.learned = r.learned;
-    if (!r.currently.empty()) p.currently = r.currently;
-    if (!r.archetype.empty()) p.archetype = r.archetype;
-    if (!r.home.empty() && world_.findSector(r.home) >= 0) p.home = world_.findSector(r.home);
-    if (!r.work.empty()) p.work = r.work == "home" ? -1 : world_.findSector(r.work);
-    if (r.wakeHour >= 0) p.wakeHour = r.wakeHour;
-    if (r.sleepHour >= 0) p.sleepHour = r.sleepHour;
-    if (r.sociability >= 0) p.sociability = r.sociability;
-    if (r.wakeHour >= 0 || r.sleepHour >= 0) {
-      int s = p.sleepHour % 24;
-      p.lifestyle = p.first + " goes to bed around " + std::to_string(s % 12 == 0 ? 12 : s % 12) + (s < 12 ? " am" : " pm") +
-                    " and wakes up around " + std::to_string(p.wakeHour) + " am.";
-    }
-  }
-  news_ = seedNews(world_, personas);
+  auto personas = makePersonas(world_, opts_.spec);
+  news_ = seedNews(world_, personas, opts_.spec);
   agents_.resize(personas.size());
   for (size_t i = 0; i < personas.size(); ++i) {
     Agent& a = agents_[i];
     a.p = std::move(personas[i]);
-    a.rngState = opts_.seed * 2654435761u + static_cast<uint32_t>(i) * 40503u;
+    a.rngState = opts_.spec.env.seed * 2654435761u + static_cast<uint32_t>(i) * 40503u;
     a.provider = roster_.empty() ? nullptr : roster_[i % roster_.size()].get();
     // Start in bed, asleep.
     int bedroom = world_.findArena(a.p.home, a.p.bedArena);
@@ -81,14 +98,15 @@ void Ville::setupAgents() {
     if (news_[n].invite) o.attending.push_back(static_cast<int>(n));
     MemoryNode m;
     m.type = NodeType::Thought;
-    m.description = news_[n].origin >= 0 && news_[n].invite ? "I am planning a Valentine's Day party at Hobbs Cafe on February 14th from 5pm to 7pm, and I want to invite everyone."
-                                                            : "I am running for mayor of the Ville.";
+    m.description = news_[n].invite ? "I am hosting " + (news_[n].name.empty() ? std::string("an event") : news_[n].name) +
+                                          " and I want to invite everyone. " + news_[n].text
+                                    : news_[n].text;
     m.poignancy = 8;
     m.news = static_cast<int>(n);
     o.memory.push_back(m);
   }
   // Relationships from the town spec: they start out knowing each other.
-  for (auto& rel : opts_.spec.relationships) {
+  for (auto& rel : opts_.spec.env.relationships) {
     int a = -1, b = -1;
     for (size_t i = 0; i < agents_.size(); ++i) {
       if (agents_[i].p.name == rel.a) a = static_cast<int>(i);
@@ -111,18 +129,11 @@ void Ville::setupAgents() {
   grid_.assign(gridW_ * gridH_, {});
 }
 
-int64_t Ville::minutesSinceStart() const { return opts_.startHour * 60 + step_ * kSecondsPerStep / 60; }
+int64_t Ville::minutesSinceStart() const { return static_cast<int64_t>(opts_.spec.env.startHour) * 60 + step_ * kSecondsPerStep / 60; }
 int Ville::dayIndex() const { return static_cast<int>(minutesSinceStart() / 1440); }
 int Ville::minuteOfDay() const { return static_cast<int>(minutesSinceStart() % 1440); }
 
-std::string Ville::clockText() const {
-  int d = dayIndex(), m = minuteOfDay();
-  int h = m / 60, mm = m % 60;
-  char buf[96];
-  std::snprintf(buf, sizeof buf, "%s, February %d, 2023 -- %d:%02d %s", kDays[d % 7], 13 + d,
-                h % 12 == 0 ? 12 : h % 12, mm, h < 12 ? "am" : "pm");
-  return buf;
-}
+std::string Ville::clockText() const { return clockFor(opts_.spec.env, step_, false); }
 
 sl::SeededRandom Ville::rngFor(int agent, uint32_t salt) const {
   return sl::SeededRandom(agents_[agent].rngState ^ static_cast<uint32_t>(step_ * 2246822519u) ^ salt);
@@ -155,7 +166,7 @@ int Ville::resolveSector(const Agent& a, const std::string& place) const {
   else if (place == "townhall") want = SectorKind::TownHall;
   else if (place == "classroom" || place == "library" || place == "college") want = SectorKind::College;
   else return a.p.home;
-  // The Ville's own named place first (Hobbs Cafe for "cafe"), else nearest.
+  // The resident's own workplace first, else the nearest of that kind.
   int best = -1, bestD = 1 << 30;
   const Sector& home = world_.sectors[std::max(0, a.p.home)];
   for (size_t s = 0; s < world_.sectors.size(); ++s) {
@@ -170,7 +181,7 @@ int Ville::resolveSector(const Agent& a, const std::string& place) const {
   return best >= 0 ? best : a.p.home;
 }
 
-// Memory retrieval (Park et al. 2023 section 4.1): recency + importance +
+// Memory retrieval: recency + importance +
 // relevance, each normalized to [0, 1], equally weighted.
 std::vector<int> Ville::retrieve(int i, const std::string& focal, int k) const {
   const Agent& a = agents_[i];
@@ -210,7 +221,7 @@ void Ville::rebuildGrid() {
 
 // Perception: other agents within the vision radius in the same arena (or
 // both outdoors), and in-use objects nearby. An observation already recorded
-// in the agent's recent memory isn't recorded again -- the paper's retention.
+// in the agent's recent memory isn't recorded again.
 void Ville::perceive(int i, std::vector<MemoryNode>& out) {
   Agent& a = agents_[i];
   if (a.asleep) return;
@@ -264,7 +275,7 @@ void Ville::perceive(int i, std::vector<MemoryNode>& out) {
     }
 }
 
-// Waking plan: broad strokes, then the hourly schedule (paper section 4.3).
+// Waking plan: broad strokes, then the hourly schedule.
 void Ville::planDay(int i) {
   Agent& a = agents_[i];
   auto rng = rngFor(i, 0x51ED);
@@ -290,7 +301,9 @@ void Ville::applyInvites(int i) {
     const News& nw = news_[n];
     if (nw.day != a.day) continue;
     for (int h = nw.startMin / 60; h < nw.endMin / 60 && h < 24; ++h) {
-      a.schedule[h].activity = nw.origin == i ? "hosting the Valentine's Day party at Hobbs Cafe" : nw.activity;
+      a.schedule[h].activity = nw.origin == i ? "hosting " + (nw.name.empty() ? std::string("an event") : nw.name) +
+                                                    (nw.sector >= 0 ? " at " + world_.sectors[nw.sector].name : std::string())
+                                              : nw.activity;
       a.schedule[h].place = "event:" + std::to_string(n);
     }
   }
@@ -380,6 +393,7 @@ void Ville::beginChat(int a, int b) {
   if (lines.empty()) return;
   for (Agent* p : {&A, &B}) {
     p->chatWith = p == &A ? b : a;
+    p->chatNews = share;
     p->chatLines = lines;
     p->chatLineAt.clear();
     for (size_t k = 0; k < lines.size(); ++k) p->chatLineAt.push_back(step_ + static_cast<int64_t>(k) * kStepsPerMinute / 2);
@@ -398,7 +412,8 @@ void Ville::beginChat(int a, int b) {
       // The reply that follows the line where the invite is actually made.
       for (size_t k = 0; k + 1 < lines.size(); ++k)
         if (lines[k].first == a && lines[k + 1].first == b &&
-            (lines[k].second.find("party") != std::string::npos || lines[k].second.find("Did you hear") != std::string::npos)) {
+            (lines[k].second.find("hosting") != std::string::npos || lines[k].second.find("Did you hear") != std::string::npos ||
+             (!news_[share].name.empty() && lines[k].second.find(news_[share].name) != std::string::npos))) {
           std::string reply = lines[k + 1].second;
           for (auto& c : reply) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
           bool yes = reply.find("be there") != std::string::npos || reply.find("i'll come") != std::string::npos ||
@@ -422,8 +437,8 @@ void Ville::finishChat(int i) {
   if (other < 0) return;
   a.familiarity[other] += 1;
   std::string topic;
-  for (auto& [s, l] : a.chatLines)
-    if (l.find("Did you hear") != std::string::npos || l.find("party") != std::string::npos) topic = " about " + (l.find("party") != std::string::npos ? std::string("the Valentine's Day party") : std::string("town news"));
+  if (a.chatNews >= 0) topic = " about " + (news_[a.chatNews].name.empty() ? std::string("town news") : news_[a.chatNews].name);
+  a.chatNews = -1;
   MemoryNode m;
   m.type = NodeType::Chat;
   m.subject = a.p.name;
@@ -455,7 +470,7 @@ void Ville::reflect(int i) {
 }
 
 bool Ville::step() {
-  if (dayIndex() >= opts_.days) return true;
+  if (dayIndex() >= opts_.spec.env.days) return true;
   int n = static_cast<int>(agents_.size());
   int minute = minuteOfDay();
   // Measured: below ~600 residents a step is too small to amortize the pool
@@ -551,7 +566,7 @@ bool Ville::step() {
   }
 
   ++step_;
-  return dayIndex() >= opts_.days || cancel.load();
+  return dayIndex() >= opts_.spec.env.days || cancel.load();
 }
 
 }  // namespace ville

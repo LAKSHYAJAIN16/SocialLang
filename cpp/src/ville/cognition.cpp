@@ -36,289 +36,122 @@ std::string hourText(int h) {
   return std::to_string(hh) + (h < 12 ? ":00 am" : ":00 pm");
 }
 
-// ---- Schedules: the archetype's working day, then meals, free time, sleep.
+// ---- Everything below reads the behavior file: routines, everyday
+// entries, free time, and activity breakdowns.
 
-struct Block {
-  int from, to;
-  std::string activity, place;
-};
-
-std::vector<Block> workday(const Persona& p, sl::SeededRandom& rng) {
-  const std::string& a = p.archetype;
-  int w = p.wakeHour;
-  std::vector<Block> b = {{w, w + 1, "waking up and completing the morning routine", "home"}};
-  auto lunch = [&](int h) {
-    b.push_back({h, h + 1, rng.random() < 0.6 ? "having lunch at Hobbs Cafe" : "having lunch at home",
-                 rng.random() < 0.6 ? "cafe" : "home"});
-    if (b.back().place == "home") b.back().activity = "having lunch at home";
-    else b.back().activity = "having lunch at Hobbs Cafe";
+std::string fill(std::string text, const Persona& p, const std::string& activity = "") {
+  auto sub = [&](const std::string& key, const std::string& value) {
+    for (size_t at = text.find(key); at != std::string::npos; at = text.find(key, at + value.size()))
+      text.replace(at, key.size(), value);
   };
-  if (a == "cafe_owner") {
-    b.push_back({w + 1, 8, "opening the cafe for the day", "work"});
-    b.push_back({8, 12, "working at the counter of the cafe", "work"});
-    b.push_back({12, 13, "having lunch at the cafe", "work"});
-    b.push_back({13, 17, "working at the counter of the cafe", "work"});
-    b.push_back({17, 20, "serving customers at the cafe", "work"});
-    b.push_back({20, 21, "closing up the cafe", "work"});
-  } else if (a == "student") {
-    b.push_back({9, 12, "attending class at Oak Hill College", "classroom"});
-    lunch(12);
-    b.push_back({13, 16, "studying at the college library", "library"});
-    b.push_back({16, 17, p.currently, "library"});
-    b.push_back({17, 18, "taking a walk in the park", "park"});
-  } else if (a == "professor") {
-    b.push_back({w + 1, 9, "preparing the day's lecture", "office"});
-    b.push_back({9, 12, "teaching a class at Oak Hill College", "classroom"});
-    lunch(12);
-    b.push_back({13, 16, "holding office hours", "office"});
-    b.push_back({16, 17, "grading papers", "office"});
-  } else if (a == "pharmacist" || a == "shopkeeper") {
-    b.push_back({w + 1, 12, "working at the store counter", "work"});
-    lunch(12);
-    b.push_back({13, 17, "working at the store counter", "work"});
-  } else if (a == "bartender") {
-    b.push_back({w + 1, 12, "running errands at the market", "market"});
-    lunch(12);
-    b.push_back({13, 15, p.currently, "home"});
-    b.push_back({15, 16, "preparing the pub for the evening", "work"});
-    b.push_back({16, 24, "tending the bar at the pub", "work"});
-  } else if (a == "politician") {
-    b.push_back({w + 1, 8, "reading the newspaper over breakfast", "home"});
-    b.push_back({8, 10, "talking to residents in the park about the mayoral campaign", "park"});
-    b.push_back({10, 12, "working on the mayoral campaign at Town Hall", "work"});
-    b.push_back({12, 13, "having lunch at Hobbs Cafe", "cafe"});
-    b.push_back({13, 15, "campaigning around the market", "market"});
-    b.push_back({15, 16, "campaigning at Hobbs Cafe", "cafe"});
-    b.push_back({16, 17, "taking a walk in the park", "park"});
-  } else if (a == "comedian") {
-    b.push_back({w + 1, 12, p.currently, "home"});
-    lunch(12);
-    b.push_back({13, 17, "writing new jokes at Hobbs Cafe", "cafe"});
-    b.push_back({19, 22, "performing at the open mic at the pub", "work"});
-  } else if (a == "photographer" || (a == "artist" && p.work >= 0)) {
-    b.push_back({w + 1, 12, a == "photographer" ? "taking photographs around the park" : "painting in the park", "work"});
-    lunch(12);
-    b.push_back({13, 16, a == "photographer" ? "editing photos at Hobbs Cafe" : p.currently, a == "photographer" ? "cafe" : "work"});
-  } else if (a == "mathematician") {
-    b.push_back({w + 1, 12, "researching at the college library", "library"});
-    lunch(12);
-    b.push_back({13, 16, p.currently, "library"});
-  } else if (a == "retiree") {
-    b.push_back({w + 1, 10, "tending the garden at home", "home"});
-    b.push_back({10, 12, "taking a walk in the park", "park"});
-    lunch(12);
-    b.push_back({13, 15, "shopping for groceries at the market", "market"});
-  } else {  // writer, artist at home, engineer, lawyer
-    std::string place = p.work >= 0 ? "work" : "home";
-    std::string job = a == "engineer" ? "coding at the desk"
-                      : a == "lawyer" ? "working with clients"
-                      : a == "artist" ? "painting"
-                                      : "writing";
-    b.push_back({w + 1, 12, job, place});
-    lunch(12);
-    b.push_back({13, 17, p.currently, place});
-  }
-  return b;
-}
-
-std::string freeTime(const Persona& p, sl::SeededRandom& rng, std::string& place) {
-  double r = rng.random() * (0.6 + p.sociability);
-  if (r < 0.35) {
-    place = "home";
-    return "relaxing at home";
-  }
-  if (r < 0.6) {
-    place = "home";
-    return "reading at home";
-  }
-  if (r < 0.85) {
-    place = "park";
-    return "taking a walk in the park";
-  }
-  if (r < 1.1) {
-    place = "pub";
-    return "having a drink at the pub";
-  }
-  place = "cafe";
-  return "hanging out at Hobbs Cafe";
-}
-
-// ---- Task decomposition: 5-15 minute steps, each tied to an object.
-
-struct T {
-  const char* desc;
-  const char* obj;
-  int min;
-};
-
-std::vector<T> templatesFor(const std::string& activity, const std::string& place) {
-  const std::string& s = activity;
-  if (has(s, "sleep")) return {{"sleeping", "bed", 60}};
-  if (has(s, "morning routine"))
-    return {{"waking up and stretching", "bed", 5},     {"using the bathroom", "toilet", 5},
-            {"taking a shower", "shower", 10},           {"getting dressed", "closet", 5},
-            {"making breakfast", "stove", 15},           {"eating breakfast", "table", 20}};
-  if (has(s, "party") && has(s, "hosting"))
-    return {{"welcoming guests to the party", "cafe customer seating", 20},
-            {"serving drinks at the party", "behind the cafe counter", 20},
-            {"chatting with guests at the party", "cafe customer seating", 20}};
-  if (has(s, "party"))
-    return {{"arriving at the Valentine's Day party", "cafe customer seating", 10},
-            {"chatting with people at the party", "cafe customer seating", 30},
-            {"enjoying snacks at the party", "cafe customer seating", 20}};
-  if (has(s, "opening the cafe") || has(s, "closing up"))
-    return {{has(s, "opening") ? "unlocking the cafe and turning on the lights" : "wiping down the tables", "cafe customer seating", 15},
-            {has(s, "opening") ? "brewing the first pot of coffee" : "cleaning the coffee machine", "coffee machine", 25},
-            {has(s, "opening") ? "setting up the counter" : "counting the register", "behind the cafe counter", 20}};
-  if (has(s, "counter of the cafe") || has(s, "serving customers") || has(s, "party preparations"))
-    return {{"greeting customers", "behind the cafe counter", 10}, {"brewing coffee for customers", "coffee machine", 15},
-            {"taking orders", "behind the cafe counter", 15},    {"baking pastries", "cooking area", 10},
-            {"cleaning the counter", "behind the cafe counter", 10}};
-  if (has(s, "store counter"))
-    return {{"helping customers", "behind the", 15}, {"restocking shelves", "shelf", 20},
-            {"ringing up purchases", "behind the", 15}, {"checking inventory", "shelf", 10}};
-  if (has(s, "tending the bar") || has(s, "preparing the pub"))
-    return {{"pouring drinks", "beer taps", 20}, {"chatting with customers", "behind the bar counter", 20},
-            {"cleaning glasses", "behind the bar counter", 20}};
-  if (has(s, "open mic"))
-    return {{"warming up backstage", "bar customer seating", 20}, {"performing stand-up comedy", "karaoke machine", 25},
-            {"chatting with the audience", "bar customer seating", 15}};
-  if (has(s, "attending class"))
-    return {{"listening to the lecture", "classroom student seating", 25}, {"taking notes", "classroom student seating", 20},
-            {"discussing with classmates", "classroom student seating", 15}};
-  if (has(s, "teaching"))
-    return {{"giving a lecture", "classroom podium", 30}, {"writing on the blackboard", "blackboard", 15},
-            {"answering students' questions", "classroom podium", 15}};
-  if (has(s, "office hours") || has(s, "grading") || has(s, "preparing the day"))
-    return {{has(s, "grading") ? "grading papers" : has(s, "office hours") ? "meeting with a student" : "preparing lecture notes", "desk", 30},
-            {"reading a book", "bookshelf", 15},
-            {"answering emails", "desk", 15}};
-  if (has(s, "library") || has(s, "studying") || has(s, "research"))
-    return {{"reading at the library", "library table", 25}, {"looking for books", "bookshelf", 10},
-            {"writing notes", "library table", 25}};
-  if (has(s, "lunch at Hobbs") || has(s, "lunch at the cafe") || has(s, "hanging out at Hobbs"))
-    return {{"ordering food at the counter", "cafe customer seating", 10}, {"eating lunch", "cafe customer seating", 30},
-            {"having a coffee", "cafe customer seating", 20}};
-  if (has(s, "lunch") || has(s, "dinner") || has(s, "eating"))
-    return {{"cooking a meal", "stove", 20}, {"eating", "table", 30}, {"washing the dishes", "sink", 10}};
-  if (has(s, "park") || has(s, "walk"))
-    return {{"walking around the park", "park garden", 20}, {"sitting on a bench", "park bench", 25},
-            {"enjoying the view", "picnic table", 15}};
-  if (has(s, "pub") || has(s, "drink"))
-    return {{"ordering a drink", "bar customer seating", 10}, {"having a drink", "bar customer seating", 30},
-            {"playing pool", "pool table", 20}};
-  if (has(s, "campaign"))
-    return {{"talking with residents about the campaign", place == "work" ? "notice board" : "bench", 30},
-            {"handing out campaign flyers", place == "work" ? "desk" : "bench", 20},
-            {"listening to residents' concerns", place == "work" ? "desk" : "bench", 10}};
-  if (has(s, "market") || has(s, "shopping") || has(s, "errands"))
-    return {{"browsing the shelves", "grocery shelf", 20}, {"picking up groceries", "grocery shelf", 20},
-            {"paying at the counter", "behind the grocery counter", 20}};
-  if (has(s, "photograph") || has(s, "photos"))
-    return {{"taking photographs", "park garden", 25}, {"setting up the camera", "park bench", 10},
-            {"reviewing shots", place == "cafe" ? "cafe customer seating" : "picnic table", 25}};
-  if (has(s, "painting") || has(s, "watercolor") || has(s, "animation"))
-    return {{"sketching ideas", place == "work" ? "park bench" : "desk", 20},
-            {"painting", place == "work" ? "park bench" : "desk", 30},
-            {"cleaning the brushes", place == "work" ? "picnic table" : "sink", 10}};
-  if (has(s, "coding") || has(s, "app"))
-    return {{"writing code", "desk", 30}, {"on a video call with the team", "desk", 15}, {"making coffee", "stove", 5},
-            {"testing the app", "desk", 10}};
-  if (has(s, "garden"))
-    return {{"watering the plants", "couch", 20}, {"pulling weeds", "couch", 25}, {"resting on the couch", "couch", 15}};
-  if (has(s, "newspaper"))
-    return {{"reading the newspaper", "dining table", 30}, {"drinking coffee", "dining table", 30}};
-  if (has(s, "relaxing") || has(s, "reading at home"))
-    return {{has(s, "reading") ? "reading a book" : "watching TV", has(s, "reading") ? "couch" : "tv", 30},
-            {"relaxing on the couch", "couch", 30}};
-  if (has(s, "writing") || has(s, "jokes") || has(s, "poems") || has(s, "novel") || has(s, "book") || has(s, "thesis"))
-    return {{"writing", place == "cafe" ? "cafe customer seating" : "desk", 35},
-            {"rereading the draft", place == "cafe" ? "cafe customer seating" : "desk", 15},
-            {"taking a short break", place == "cafe" ? "cafe customer seating" : "couch", 10}};
-  if (has(s, "clients") || has(s, "taxes"))
-    return {{"reviewing client documents", "desk", 30}, {"meeting with a client", "meeting table", 30}};
-  return {{s.c_str(), "", 60}};
-}
-
-// Keeps the strings alive for templatesFor's fallback case.
-std::vector<Task> toTasks(const std::vector<T>& ts, const std::string& place, int minutes, const Cognition& cog,
-                          const std::string& fallbackDesc) {
-  std::vector<Task> out;
-  int sum = 0;
-  for (auto& t : ts) sum += t.min;
-  for (auto& t : ts) {
-    Task k;
-    k.desc = t.desc[0] ? t.desc : fallbackDesc;
-    k.place = place;
-    k.objectKw = t.obj;
-    k.minutes = std::max(5, t.min * minutes / std::max(sum, 1));
-    k.emoji = cog.emoji(k.desc);
-    out.push_back(std::move(k));
-  }
-  return out;
+  sub("{currently}", p.currently);
+  sub("{name}", p.first);
+  sub("{activity}", activity);
+  return text;
 }
 
 // Short "I'm ..." description of an action.
 std::string doing(const Agent& a) { return a.action.empty() ? "out and about" : a.action; }
 
+// Hour of an entry end point for this resident, clamped to the day.
+int hourOf(const HourRef& h, const Persona& p) { return std::clamp(h.at(p.wakeHour, p.sleepHour), 0, 24); }
+
 class PersonaCognition : public Cognition {
  public:
   void planDay(Ville& v, int i, sl::SeededRandom& rng, std::vector<std::string>& plan,
                std::vector<HourSlot>& schedule) override {
-    const Agent& ag = v.agents()[i];
-    const Persona& p = ag.p;
-    std::vector<Block> blocks = workday(p, rng);
-    // Meals, free time, then sleep fill the rest of the day.
-    auto covered = [&](int h) {
-      for (auto& b : blocks)
-        if (h >= b.from && h < b.to) return true;
-      return false;
-    };
-    int endWork = 0;
-    for (auto& b : blocks) endWork = std::max(endWork, b.to);
-    int sleepH = p.sleepHour;
-    for (int h = p.wakeHour; h < std::min(sleepH, 24); ++h) {
-      if (covered(h)) continue;
-      if (h == 18) {
-        blocks.push_back({h, h + 1, "eating dinner", "home"});
-        continue;
+    const Persona& p = v.agents()[i].p;
+    const BehaviorSpec& b = v.behavior();
+    int wake = std::clamp(p.wakeHour, 0, 23), sleep = std::clamp(p.sleepHour, wake + 1, 24);
+    // Hour by hour: sleeping, then the routine, then everyday entries (meals,
+    // the morning routine), then free time for whatever is still open.
+    std::vector<HourSlot> day(24);
+    std::vector<char> set(24, 0);
+    for (int h = 0; h < 24; ++h) day[h] = {"sleeping", "home", 60};
+    auto apply = [&](const std::vector<RoutineEntry>& entries, bool overwrite) {
+      for (auto& e : entries) {
+        if (e.options.empty()) continue;
+        const auto& opt = e.options[rng.index(e.options.size())];
+        int from = hourOf(e.from, p), to = hourOf(e.to, p);
+        for (int h = from; h < to && h < 24; ++h) {
+          if (h < wake || h >= sleep) continue;
+          if (set[h] && !overwrite) continue;
+          day[h] = {fill(opt.first, p), opt.second, 60};
+          set[h] = 1;
+        }
       }
-      std::string place;
-      std::string act = freeTime(p, rng, place);
-      blocks.push_back({h, h + 1, act, place});
+    };
+    if (auto it = b.routines.find(p.archetype); it != b.routines.end()) apply(it->second, true);
+    apply(b.everyday, false);
+    float total = 0;
+    for (auto& f : b.freeTime) total += f.weight * (f.social ? 0.5f + p.sociability : 1.0f);
+    for (int h = wake; h < sleep && h < 24; ++h) {
+      if (set[h] || b.freeTime.empty()) continue;
+      float roll = static_cast<float>(rng.random()) * total;
+      const FreeTimeSpec* pick = &b.freeTime.back();
+      for (auto& f : b.freeTime) {
+        float w = f.weight * (f.social ? 0.5f + p.sociability : 1.0f);
+        if (roll < w) {
+          pick = &f;
+          break;
+        }
+        roll -= w;
+      }
+      day[h] = {fill(pick->activity, p), pick->place, 60};
+      set[h] = 1;
     }
-    std::sort(blocks.begin(), blocks.end(), [](const Block& x, const Block& y) { return x.from < y.from; });
-    // Hourly schedule, midnight to midnight.
-    schedule.clear();
-    for (int h = 0; h < 24; ++h) {
-      HourSlot s;
-      s.activity = "sleeping";
-      s.place = "home";
-      if (h >= p.wakeHour && h < sleepH)
-        for (auto& b : blocks)
-          if (h >= b.from && h < b.to) {
-            s.activity = b.activity;
-            s.place = b.place;
-          }
-      schedule.push_back(s);
-    }
-    // Broad-strokes plan, in the paper's format.
+    schedule = day;
+    // Broad-strokes plan.
     plan.clear();
-    plan.push_back("wake up and complete the morning routine at " + hourText(p.wakeHour));
     std::string last;
-    for (int h = p.wakeHour + 1; h < std::min(sleepH, 24); ++h)
+    for (int h = wake; h < sleep && h < 24; ++h)
       if (schedule[h].activity != last) {
         last = schedule[h].activity;
         plan.push_back(last + " at " + hourText(h));
       }
-    plan.push_back("go to bed at " + hourText(sleepH % 24));
+    plan.push_back("go to bed at " + hourText(sleep % 24));
   }
 
   std::vector<Task> decompose(Ville& v, int i, const HourSlot& slot, sl::SeededRandom& rng) override {
-    (void)v;
-    (void)i;
     (void)rng;
-    return toTasks(templatesFor(slot.activity, slot.place), slot.place, slot.minutes, *this, slot.activity);
+    const BehaviorSpec& b = v.behavior();
+    const Persona& p = v.agents()[i].p;
+    std::string act = lower(slot.activity);
+    // The first activity whose name matches (and whose place, if given,
+    // matches) wins; an activity with no names is the default.
+    const ActivitySpec* match = nullptr;
+    const ActivitySpec* fallback = nullptr;
+    for (auto& a : b.activities) {
+      if (a.match.empty()) {
+        if (!fallback) fallback = &a;
+        continue;
+      }
+      if (!a.place.empty() && a.place != slot.place) continue;
+      for (auto& m : a.match)
+        if (act.find(lower(m)) != std::string::npos) {
+          match = &a;
+          break;
+        }
+      if (match) break;
+    }
+    if (!match) match = fallback;
+    std::vector<Task> out;
+    if (!match || match->steps.empty()) {
+      out.push_back({slot.activity, slot.place, "", slot.minutes, emoji(slot.activity)});
+      return out;
+    }
+    int sum = 0;
+    for (auto& s : match->steps) sum += s.minutes;
+    for (auto& s : match->steps) {
+      Task t;
+      t.desc = fill(s.desc, p, slot.activity);
+      t.place = slot.place;
+      t.objectKw = s.object;
+      t.minutes = std::max(5, s.minutes * slot.minutes / std::max(sum, 1));
+      t.emoji = emoji(t.desc);
+      out.push_back(std::move(t));
+    }
+    return out;
   }
 
   bool wantsToChat(Ville& v, int a, int b, sl::SeededRandom& rng) override {
@@ -361,7 +194,11 @@ class PersonaCognition : public Cognition {
     if (news >= 0) {
       const News& n = v.news()[news];
       if (n.origin == a && n.invite) {
-        out.push_back({a, "I'm hosting a Valentine's Day party at Hobbs Cafe tomorrow from 5 to 7 pm. I'd love for you to come!"});
+        std::string when = n.day == v.dayIndex() ? "today" : n.day == v.dayIndex() + 1 ? "tomorrow" : "soon";
+        std::string what = n.name.empty() ? "a get-together" : n.name;
+        std::string where = n.sector >= 0 ? " at " + v.world().sectors[n.sector].name : "";
+        out.push_back({a, "I'm hosting " + what + where + " " + when + ", from " + hourText(n.startMin / 60) + " to " +
+                              hourText(n.endMin / 60) + ". I'd love for you to come!"});
       } else {
         std::string t = n.text;
         out.push_back({a, "Did you hear? " + t});
@@ -435,9 +272,11 @@ class PersonaCognition : public Cognition {
     for (auto& [n, c] : newsSeen) {
       const News& nw = v.news()[n];
       bool going = std::find(ag.attending.begin(), ag.attending.end(), n) != ag.attending.end();
+      std::string what = nw.name.empty() ? "event" : nw.name;
+      std::string where = nw.sector >= 0 ? " at " + v.world().sectors[nw.sector].name : "";
       if (nw.invite)
-        out.push_back(going ? "I'm looking forward to " + v.agents()[nw.origin].p.first + "'s Valentine's Day party at Hobbs Cafe."
-                            : "People are talking about " + v.agents()[nw.origin].p.first + "'s party at Hobbs Cafe.");
+        out.push_back(going ? "I'm looking forward to " + v.agents()[nw.origin].p.first + "'s " + what + where + "."
+                            : "People are talking about " + v.agents()[nw.origin].p.first + "'s " + what + where + ".");
       else
         out.push_back("Many people in town are talking about the fact that " + nw.text.substr(0, nw.text.size() - 1) + ".");
       if (out.size() >= 3) break;
@@ -447,7 +286,7 @@ class PersonaCognition : public Cognition {
   }
 };
 
-// ---- LLM cognition: the paper's prompts through each agent's provider,
+// ---- LLM cognition: prompts through each agent's own provider,
 // with the persona model as the fallback for anything unparsable.
 
 std::string identity(const Agent& a) {
@@ -460,6 +299,10 @@ std::string identity(const Agent& a) {
 class LlmCognition : public Cognition {
  public:
   explicit LlmCognition(int) {}
+  void setBehavior(const BehaviorSpec* b) override {
+    behavior_ = b;
+    fallback_.setBehavior(b);
+  }
 
   sl::CompletionResult ask(Ville& v, int i, const std::string& user, int maxTokens, double temperature = 0.8) {
     sl::Provider* prov = v.agents()[i].provider;
@@ -608,41 +451,18 @@ class LlmCognition : public Cognition {
 }  // namespace
 
 float Cognition::importance(const std::string& d) const {
-  // The paper asks the model for a 1-10 poignancy rating; offline, a
-  // keyword scale in the same range.
-  if (has(d, "sleep") || has(d, "idle")) return 1;
-  if (has(d, "party") || has(d, "mayor") || has(d, "election") || has(d, "invite")) return 8;
-  if (has(d, "convers") || has(d, "chat") || has(d, "talk")) return 5;
-  if (has(d, "shower") || has(d, "bathroom") || has(d, "dressed") || has(d, "stretch") || has(d, "dishes")) return 1;
-  if (has(d, "eat") || has(d, "lunch") || has(d, "breakfast") || has(d, "dinner") || has(d, "coffee")) return 2;
-  if (has(d, "lecture") || has(d, "class") || has(d, "research") || has(d, "writing") || has(d, "painting")) return 4;
+  // 1-10, the first keyword from the behavior file's importance { } that
+  // appears in the description.
+  if (behavior_)
+    for (auto& [kw, v] : behavior_->importance)
+      if (has(d, kw.c_str())) return v;
   return 3;
 }
 
 std::string Cognition::emoji(const std::string& d) const {
-  struct E {
-    const char* kw;
-    const char* e;
-  };
-  static const E kMap[] = {
-      {"sleep", "\xF0\x9F\x98\xB4"},   {"shower", "\xF0\x9F\x9A\xBF"},   {"bathroom", "\xF0\x9F\x9A\xBD"},
-      {"stretch", "\xF0\x9F\x99\x86"}, {"dressed", "\xF0\x9F\x91\x95"},  {"party", "\xF0\x9F\x8E\x89"},
-      {"breakfast", "\xF0\x9F\x8D\xB3"}, {"cook", "\xF0\x9F\x8D\xB3"},   {"coffee", "\xE2\x98\x95"},
-      {"brew", "\xE2\x98\x95"},        {"lunch", "\xF0\x9F\x8D\xBD"},    {"eat", "\xF0\x9F\x8D\xBD"},
-      {"dinner", "\xF0\x9F\x8D\xBD"},  {"drink", "\xF0\x9F\x8D\xBA"},    {"pool", "\xF0\x9F\x8E\xB1"},
-      {"perform", "\xF0\x9F\x8E\xA4"}, {"lecture", "\xF0\x9F\x93\x9A"},  {"class", "\xF0\x9F\x93\x9A"},
-      {"reading", "\xF0\x9F\x93\x96"}, {"book", "\xF0\x9F\x93\x96"},     {"writing", "\xF0\x9F\x93\x9D"},
-      {"notes", "\xF0\x9F\x93\x9D"},   {"paint", "\xF0\x9F\x8E\xA8"},    {"sketch", "\xF0\x9F\x8E\xA8"},
-      {"code", "\xF0\x9F\x92\xBB"},    {"video call", "\xF0\x9F\x92\xBB"}, {"photo", "\xF0\x9F\x93\xB7"},
-      {"walk", "\xF0\x9F\x9A\xB6"},    {"bench", "\xF0\x9F\x8C\xB3"},    {"view", "\xF0\x9F\x8C\xB3"},
-      {"campaign", "\xF0\x9F\x93\xA3"}, {"flyer", "\xF0\x9F\x93\xA3"},   {"grocer", "\xF0\x9F\x9B\x92"},
-      {"shelves", "\xF0\x9F\x9B\x92"}, {"customer", "\xF0\x9F\x99\x8B"}, {"pour", "\xF0\x9F\x8D\xBA"},
-      {"music", "\xF0\x9F\x8E\xB5"},   {"compos", "\xF0\x9F\x8E\xB5"},   {"garden", "\xF0\x9F\x8C\xB1"},
-      {"plant", "\xF0\x9F\x8C\xB1"},   {"tv", "\xF0\x9F\x93\xBA"},       {"clean", "\xF0\x9F\xA7\xB9"},
-      {"wash", "\xF0\x9F\xA7\xB9"},    {"newspaper", "\xF0\x9F\x93\xB0"}, {"client", "\xF0\x9F\x92\xBC"},
-  };
-  for (auto& e : kMap)
-    if (has(d, e.kw)) return e.e;
+  if (behavior_)
+    for (auto& [kw, e] : behavior_->emoji)
+      if (has(d, kw.c_str())) return e;
   return "\xF0\x9F\x92\xAD";  // thought bubble
 }
 

@@ -90,17 +90,29 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 
 }  // namespace
 
-// sl_run --ville [population] [days] [--serial] [--log] [--town FILE]: The Ville, headless.
-int runVille(int argc, char** argv) {
+// sl_run --town FILE.env.sl [--days N] [--residents N] [--serial] [--log]:
+// run a town (an environment file + the behavior file it names), headless.
+int runTown(int argc, char** argv) {
   ville::VilleOptions o;
-  o.population = argc > 2 ? std::atoi(argv[2]) : 25;
-  o.days = argc > 3 ? std::atoi(argv[3]) : 1;
   bool log = false;
-  for (int i = 2; i < argc; ++i) {
-    if (std::string(argv[i]) == "--serial") o.parallel = false;
-    if (std::string(argv[i]) == "--log") log = true;
-    if (std::string(argv[i]) == "--town" && i + 1 < argc) o.spec = ville::TownSpec::load(argv[++i]);
+  std::string path;
+  int days = -1, residents = -1;
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "--town" && i + 1 < argc) path = argv[++i];
+    else if (a == "--days" && i + 1 < argc) days = std::atoi(argv[++i]);
+    else if (a == "--residents" && i + 1 < argc) residents = std::atoi(argv[++i]);
+    else if (a == "--serial") o.parallel = false;
+    else if (a == "--log") log = true;
   }
+  try {
+    o.spec = ville::TownSpec::load(path);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "%s\n", e.what());
+    return 1;
+  }
+  if (days > 0) o.spec.env.days = days;
+  if (residents >= 0) o.spec.env.generate.residents = residents;
   std::vector<std::shared_ptr<sl::Provider>> roster = {std::make_shared<sl::MockProvider>(1)};
   long long counts[6] = {};
   auto t0 = Clock::now();
@@ -113,26 +125,29 @@ int runVille(int argc, char** argv) {
   auto t2 = Clock::now();
   double setup = std::chrono::duration<double, std::milli>(t1 - t0).count();
   double run = std::chrono::duration<double>(t2 - t1).count();
-  int attending = 0, knowParty = 0;
   size_t mem = 0;
+  std::vector<int> heard(v.news().size()), going(v.news().size());
   for (auto& a : v.agents()) {
-    attending += !a.attending.empty() && a.p.name != "Isabella Rodriguez";
-    knowParty += std::find(a.knows.begin(), a.knows.end(), 0) != a.knows.end();
     mem += a.memory.size();
+    for (int n : a.knows) ++heard[n];
+    for (int n : a.attending) ++going[n];
   }
-  std::printf("The Ville: %zu agents, %dx%d tiles, %zu sectors, %zu objects, setup %.0f ms\n", v.agents().size(),
-              v.world().width(), v.world().height(), v.world().sectors.size(), v.world().objects.size(), setup);
-  std::printf("  simulated %lld steps (%d game days) in %.2f s: %.0f steps/s, %.2f game-hours/s, %.0f agent-hours/s\n",
-              (long long)v.stepCount(), o.days, run, v.stepCount() / run, v.stepCount() / 360.0 / run,
+  std::printf("%s: %zu residents, %dx%d tiles, %zu buildings, %zu objects, setup %.0f ms\n",
+              v.environment().name.c_str(), v.agents().size(), v.world().width(), v.world().height(),
+              v.world().sectors.size(), v.world().objects.size(), setup);
+  std::printf("  simulated %lld steps (%d game days) in %.2f s: %.0f steps/s, %.0f agent-hours/s\n",
+              (long long)v.stepCount(), v.environment().days, run, v.stepCount() / run,
               v.agents().size() * v.stepCount() / 360.0 / run);
   std::printf("  actions %lld, plans %lld, dialogue lines %lld, reflections %lld, news heard %lld; memories %zu\n",
               counts[0], counts[1], counts[2], counts[3], counts[4], mem);
-  std::printf("  party: %d know about it, %d plan to attend\n", knowParty, attending);
+  for (size_t n = 0; n < v.news().size(); ++n)
+    std::printf("  \"%s\": %d heard%s\n", v.news()[n].name.empty() ? v.news()[n].text.c_str() : v.news()[n].name.c_str(),
+                heard[n], v.news()[n].invite ? (", " + std::to_string(going[n]) + " going").c_str() : "");
   return 0;
 }
 
 int main(int argc, char** argv) {
-  if (argc >= 2 && std::string(argv[1]) == "--ville") return runVille(argc, argv);
+  if (argc >= 2 && std::string(argv[1]) == "--town") return runTown(argc, argv);
   if (argc < 2) {
     std::fprintf(stderr,
                  "usage: sl_run <game.sl> [--seed N] [--max-rounds N] [--runs N] [--jobs N] [--log] [--models] "

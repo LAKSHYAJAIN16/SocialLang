@@ -1,6 +1,7 @@
 #include "ville/world.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <queue>
 
@@ -39,85 +40,20 @@ struct Plan {
 
 using Rooms = std::vector<std::pair<std::string, std::vector<std::string>>>;
 
-// Room layouts per sector kind: the first entry is the ground-floor hall the
-// front door opens into; the rest sit along the back wall.
-Rooms roomsFor(SectorKind k, int bedrooms) {
-  switch (k) {
-    case SectorKind::Home: {
-      Rooms r = {{"living room", {"couch", "tv", "bookshelf", "dining table"}},
-                 {"kitchen", {"stove", "refrigerator", "kitchen sink", "kitchen table"}},
-                 {"bathroom", {"toilet", "shower", "bathroom sink"}}};
-      for (int i = 0; i < std::clamp(bedrooms, 1, 3); ++i)
-        r.push_back({bedrooms > 1 ? "bedroom " + std::to_string(i + 1) : "bedroom", {"bed", "closet", "desk"}});
-      return r;
-    }
-    case SectorKind::Cafe:
-      return {{"cafe", {"cafe customer seating", "cafe customer seating", "cafe customer seating", "piano"}},
-              {"counter", {"behind the cafe counter", "coffee machine"}},
-              {"cafe kitchen", {"cooking area", "refrigerator"}}};
-    case SectorKind::Pub:
-      return {{"pub", {"bar customer seating", "bar customer seating", "pool table", "karaoke machine"}},
-              {"bar", {"behind the bar counter", "beer taps"}}};
-    case SectorKind::Store:
-      return {{"supply store", {"supply store shelf", "supply store shelf", "behind the supply store counter"}},
-              {"storage room", {"storage shelf"}}};
-    case SectorKind::Market:
-      return {{"grocery store", {"grocery shelf", "grocery shelf", "behind the grocery counter"}},
-              {"pharmacy", {"pharmacy counter", "behind the pharmacy counter"}}};
-    case SectorKind::College:
-      return {{"hallway", {"bench"}},
-              {"classroom", {"classroom student seating", "classroom student seating", "blackboard", "classroom podium"}},
-              {"library", {"library table", "library table", "bookshelf"}},
-              {"professor's office", {"desk", "bookshelf"}}};
-    case SectorKind::Dorm:
-      return {{"common room", {"common room sofa", "common room table", "tv"}},
-              {"dorm kitchen", {"stove", "refrigerator"}},
-              {"dorm bathroom", {"toilet", "shower"}},
-              {"dorm room 1", {"bed", "desk"}},
-              {"dorm room 2", {"bed", "desk"}},
-              {"dorm room 3", {"bed", "desk"}}};
-    case SectorKind::TownHall:
-      return {{"town hall lobby", {"bench", "notice board"}},
-              {"mayor's office", {"desk"}},
-              {"meeting room", {"meeting table", "podium"}}};
-    case SectorKind::Office:
-      return {{"office", {"office desk", "office desk", "office desk", "coffee maker"}}, {"meeting room", {"meeting table"}}};
-    case SectorKind::Park: return {};
-  }
-  return {};
-}
-
-// The paper's cast of places, in the order they're laid out.
-const std::vector<Plan>& villePlaces() {
-  static const std::vector<Plan> p = {
-      {"Hobbs Cafe", SectorKind::Cafe},
-      {"Lin family's house", SectorKind::Home},
-      {"Oak Hill College", SectorKind::College},
-      {"The Willows Market and Pharmacy", SectorKind::Market},
-      {"Moreno family's house", SectorKind::Home},
-      {"Johnson Park", SectorKind::Park},
-      {"The Rose and Crown Pub", SectorKind::Pub},
-      {"Dorm for Oak Hill College", SectorKind::Dorm},
-      {"Moore family's house", SectorKind::Home},
-      {"Harvey Oak Supply Store", SectorKind::Store},
-      {"Isabella Rodriguez's apartment", SectorKind::Home},
-      {"Town Hall", SectorKind::TownHall},
-      {"Artist's co-living space", SectorKind::Home},
-      {"Adam Smith's house", SectorKind::Home},
-      {"Yuriko Yamamoto's house", SectorKind::Home},
-      {"Tamara Taylor and Carmen Ortiz's house", SectorKind::Home},
-      {"Arthur Burton's apartment", SectorKind::Home},
-      {"Ryan Park's apartment", SectorKind::Home},
-      {"Giorgio Rossi's apartment", SectorKind::Home},
-      {"Carlos Gomez's apartment", SectorKind::Home},
-  };
-  return p;
-}
-
 }  // namespace
 
-std::vector<std::pair<std::string, std::vector<std::string>>> defaultRooms(SectorKind k, int bedrooms) {
-  return roomsFor(k, bedrooms);
+// A building's rooms from its effective spec: its own rooms if it declares
+// them, else its type's, then `bedrooms` copies of the type's bedroom.
+std::vector<std::pair<std::string, std::vector<std::string>>> roomsFromSpec(const BuildingSpec& b) {
+  Rooms rooms;
+  for (auto& r : b.rooms) rooms.push_back({r.name.empty() ? "room" : r.name, r.objects});
+  if (b.hasBedroom) {
+    int n = b.bedrooms >= 0 ? b.bedrooms : 1;
+    for (int i = 0; i < n; ++i)
+      rooms.push_back({n > 1 ? b.bedroom.name + " " + std::to_string(i + 1) : b.bedroom.name, b.bedroom.objects});
+  }
+  if (rooms.empty()) rooms.push_back({b.kind.empty() ? "room" : b.kind, {}});
+  return rooms;
 }
 
 namespace {
@@ -223,7 +159,7 @@ void World::building(int sectorId, const Rooms& rooms) {
   tiles_[s.doorY * w_ + s.doorX] = Tile::Door;
 }
 
-void World::park(int sectorId, uint32_t seed) {
+void World::park(int sectorId, uint32_t seed, const std::vector<std::string>& things) {
   const Rect r = sectors[sectorId].rect;
   Arena a;
   a.name = "park";
@@ -244,12 +180,12 @@ void World::park(int sectorId, uint32_t seed) {
     int ty = r.y + 1 + static_cast<int>((h >> 8) % (r.h - 5));
     if (tiles_[ty * w_ + tx] == Tile::Grass && !pond.contains(tx, ty)) tiles_[ty * w_ + tx] = Tile::Tree;
   }
-  const char* things[] = {"park bench", "park bench", "park garden", "picnic table"};
-  for (int i = 0; i < 4; ++i) {
+  int count = static_cast<int>(things.size());
+  for (int i = 0; i < count; ++i) {
     GameObject o;
     o.name = things[i];
     o.arena = aid;
-    o.x = r.x + 3 + i * (r.w - 6) / 3;
+    o.x = r.x + 3 + i * (r.w - 6) / std::max(1, count - 1);
     o.y = r.y + r.h - 4;
     tiles_[o.y * w_ + o.x] = Tile::Plaza;
     objects.push_back(o);
@@ -257,102 +193,82 @@ void World::park(int sectorId, uint32_t seed) {
   }
 }
 
-void World::generate(int population, uint32_t seed, const TownSpec* spec) {
+void World::generate(const TownSpec& spec) {
   sectors.clear();
   arenas.clear();
   objects.clear();
+  const EnvironmentSpec& env = spec.env;
 
-  // Which sectors this town needs: the named Ville, then generated blocks.
-  std::vector<Plan> plan = villePlaces();
-  if (population > 25) {
-    int extra = population - 25;
-    int homes = (extra + 2) / 3;
-    int cafes = std::max(1, extra / 70), pubs = std::max(1, extra / 90), stores = std::max(1, extra / 90);
-    int markets = std::max(1, extra / 90), parks = std::max(1, extra / 160), offices = std::max(1, extra / 45);
-    int colleges = extra / 400, dorms = extra / 250;
-    std::vector<Plan> more;
-    for (int i = 0; i < homes; ++i) more.push_back({"House " + std::to_string(i + 1), SectorKind::Home});
-    for (int i = 0; i < cafes; ++i) more.push_back({"Cafe " + std::to_string(i + 2), SectorKind::Cafe});
-    for (int i = 0; i < pubs; ++i) more.push_back({"Pub " + std::to_string(i + 2), SectorKind::Pub});
-    for (int i = 0; i < stores; ++i) more.push_back({"Supply Store " + std::to_string(i + 2), SectorKind::Store});
-    for (int i = 0; i < markets; ++i) more.push_back({"Market " + std::to_string(i + 2), SectorKind::Market});
-    for (int i = 0; i < parks; ++i) more.push_back({"Park " + std::to_string(i + 2), SectorKind::Park});
-    for (int i = 0; i < offices; ++i) more.push_back({"Office " + std::to_string(i + 1), SectorKind::Office});
-    for (int i = 0; i < colleges; ++i) more.push_back({"College " + std::to_string(i + 2), SectorKind::College});
-    for (int i = 0; i < dorms; ++i) more.push_back({"Dorm " + std::to_string(i + 2), SectorKind::Dorm});
+  // The buildings the environment declares, in order, then generated ones:
+  // one building of each type per N generated residents (generate.one_per).
+  std::vector<BuildingSpec> plan = env.buildings;
+  int extra = env.generate.residents;
+  if (extra > 0) {
+    std::vector<BuildingSpec> more;
+    for (auto& [kind, per] : env.generate.onePer) {
+      if (per <= 0) continue;
+      int count = std::max(1, (extra + per - 1) / per);
+      std::string label = kind;
+      if (!label.empty()) label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+      for (int i = 0; i < count; ++i) {
+        BuildingSpec b;
+        b.kind = kind;
+        b.name = (kind == "home" ? std::string("House") : label) + " " + std::to_string(i + 1);
+        more.push_back(b);
+      }
+    }
     // Interleave so neighborhoods mix homes and businesses.
-    for (size_t i = more.size(); i-- > 1;) std::swap(more[i], more[mix(seed + static_cast<uint32_t>(i)) % (i + 1)]);
+    for (size_t i = more.size(); i-- > 1;) std::swap(more[i], more[mix(env.seed + static_cast<uint32_t>(i)) % (i + 1)]);
     plan.insert(plan.end(), more.begin(), more.end());
   }
 
   int n = static_cast<int>(plan.size());
-  int cols = std::max(5, static_cast<int>(std::ceil(std::sqrt(n * 1.4))));
-  int rows = (n + cols - 1) / cols;
+  int cols = std::max(5, static_cast<int>(std::ceil(std::sqrt(std::max(n, 1) * 1.4))));
+  int rows = std::max(1, (n + cols - 1) / cols);
   w_ = cols * kCellW + kRoad;
   h_ = rows * kCellH + kRoad;
   tiles_.assign(w_ * h_, Tile::Grass);
   arenaOf_.assign(w_ * h_, -1);
   sectorOf_.assign(w_ * h_, -1);
-  // Street grid
   for (int y = 0; y < h_; ++y)
     for (int x = 0; x < w_; ++x)
       if (x % kCellW < kRoad || y % kCellH < kRoad) tiles_[y * w_ + x] = Tile::Road;
-
+  // Empty lots at the end of the last row get a few trees.
   for (int i = n; i < rows * cols; ++i) {
     int cx = (i % cols) * kCellW + kRoad, cy = (i / cols) * kCellH + kRoad;
     for (int t = 0; t < 14; ++t) {
-      uint32_t h = mix(seed * 31u + i * 977u + t);
+      uint32_t h = mix(env.seed * 31u + i * 977u + t);
       int tx = cx + 1 + static_cast<int>(h % (kCellW - kRoad - 2)), ty = cy + 1 + static_cast<int>((h >> 10) % (kCellH - kRoad - 2));
       tiles_[ty * w_ + tx] = Tile::Tree;
     }
   }
+
   for (int i = 0; i < n; ++i) {
     int cx = (i % cols) * kCellW + kRoad, cy = (i / cols) * kCellH + kRoad;
     int cellW = kCellW - kRoad, cellH = kCellH - kRoad;
-    Plan p = plan[i];
-    // Customizations from the town spec: type, size, colors, name, rooms.
-    BuildingSpec style;
-    const BuildingSpec* custom = nullptr;
-    if (spec) {
-      auto it = spec->buildings.find(p.name);
-      if (it != spec->buildings.end() && !it->second.kind.empty()) p.kind = sectorKindFromName(it->second.kind, p.kind);
-      style = spec->styleFor(p.name, sectorKindName(p.kind));  // town < type < this building
-      custom = &style;
-    }
+    BuildingSpec b = spec.styleFor(plan[i]);  // style < type < this building
+    SectorKind kind = sectorKindFromName(b.kind, SectorKind::Home);
     auto finish = [&](int id) {
-      if (!custom) return;
-      if (!custom->name.empty()) sectors[id].name = custom->name;
-      sectors[id].floorColor = custom->floorColor;
-      sectors[id].wallColor = custom->wallColor;
+      sectors[id].floorColor = b.floorColor;
+      sectors[id].wallColor = b.wallColor;
     };
-    if (p.kind == SectorKind::Park) {
+    if (kind == SectorKind::Park) {
       Rect r{cx + 1, cy + 1, cellW - 2, cellH - 2};
-      int id = addSector(p.name, p.kind, r, r.cx(), r.y + r.h - 1);
-      park(id, seed + i);
+      int id = addSector(b.name, kind, r, r.cx(), r.y + r.h - 1);
+      park(id, env.seed + i, b.parkObjects);
       finish(id);
       continue;
     }
-    bool big = p.kind == SectorKind::College || p.kind == SectorKind::Dorm || p.kind == SectorKind::Cafe ||
-               p.kind == SectorKind::Market || p.kind == SectorKind::TownHall;
-    int size = custom && custom->size >= 0 ? custom->size : 1;
-    if (size == 2) big = true;
-    int bw = big ? cellW - 2 : cellW - 6, bh = big ? cellH - 4 : cellH - 6;
-    if (size == 0) {
-      bw = cellW - 10;
-      bh = cellH - 8;
-    }
+    int size = b.size >= 0 ? b.size : 1;
+    int bw = size == 2 ? cellW - 2 : size == 0 ? cellW - 10 : cellW - 6;
+    int bh = size == 2 ? cellH - 4 : size == 0 ? cellH - 8 : cellH - 6;
     Rect r{cx + (cellW - bw) / 2, cy + 1, bw, bh};
     int doorX = r.cx(), doorY = r.y + r.h - 1;
-    int id = addSector(p.name, p.kind, r, doorX, doorY);
-    int bedrooms = p.name == "Lin family's house" ? 3 : p.name == "Artist's co-living space" ? 3 : 2;
-    Rooms rooms = roomsFor(p.kind, bedrooms);
-    if (custom && custom->customRooms && !custom->rooms.empty()) {
-      rooms.clear();
-      for (auto& r : custom->rooms) rooms.push_back({r.name.empty() ? "room" : r.name, r.objects});
-      // Each back room needs at least 3 tiles of width.
-      size_t maxRooms = static_cast<size_t>((bw - 2 + 1) / 4) + 1;
-      if (rooms.size() > maxRooms) rooms.resize(maxRooms);
-    }
+    int id = addSector(b.name, kind, r, doorX, doorY);
+    Rooms rooms = roomsFromSpec(b);
+    // Each back room needs at least 3 tiles of width.
+    size_t maxRooms = static_cast<size_t>((bw - 2 + 1) / 4) + 1;
+    if (rooms.size() > maxRooms) rooms.resize(maxRooms);
     building(id, rooms);
     finish(id);
     // A short walk from the door down to the street.
