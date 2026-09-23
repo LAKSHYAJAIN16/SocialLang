@@ -62,7 +62,7 @@ sim TrustGame {
 
 A program is one `sim <Name> { ... }` block: `agents` sets the population, `role` blocks define seat kinds (team, memory pattern, visibility, how many), an optional `world` block scatters spatial locations, and `phase`/`fn`/`win_condition`/`loop` are the actual game logic in ordinary imperative syntax (`if`, `while`, `for`, functions, lists, dicts). Roster assignment lives outside the language on purpose -- a `sim` describes shape, not which model fills which seat; `sociallang run` loads `config/models.yaml` and assigns one model per anonymized seat (`P1`, `P2`, ...).
 
-Three memory patterns ship built in (`full_history`, `recent(n)`, and `generative(k)` -- Park et al. 2023 memory-stream retrieval), plus `reflect`/`maybe_reflect` for synthesizing higher-level insights back into memory. Built-in functions cover asking agents things (`ask`, `ask_choice`, and bulk `ask_all`/`ask_choice_all` for scale), publishing events (`broadcast`, `whisper`), querying and moving agents (`alive`, `eliminate`, spatial placement), and running the win condition. `games/smallville.sl` implements the full Park et al. 2023 Generative Agents architecture (persona, planning, reacting, dialogue, reflection) on top of the same builtins, and `games/smallville_mafia.sl` layers Mafia on top of that. Scaling to thousands of agents needs no special syntax -- `role { count: 5000 }` plus ordinary `fn` calls does it; `games/city.sl` runs a full game with 5,050 agents in about a second.
+Three memory patterns ship built in (`full_history`, `recent(n)`, and `generative(k)` -- memory-stream retrieval by recency, importance, and relevance), plus `reflect`/`maybe_reflect` for synthesizing higher-level insights back into memory. Built-in functions cover asking agents things (`ask`, `ask_choice`, and bulk `ask_all`/`ask_choice_all` for scale), publishing events (`broadcast`, `whisper`), querying and moving agents (`alive`, `eliminate`, spatial placement), and running the win condition. `games/smallville.sl` implements a full generative-agent loop (persona, planning, reacting, dialogue, reflection) on top of the same builtins, and `games/smallville_mafia.sl` layers Mafia on top of that. Scaling to thousands of agents needs no special syntax -- `role { count: 5000 }` plus ordinary `fn` calls does it; `games/city.sl` runs a full game with 5,050 agents in about a second.
 
 Full grammar, the complete built-in function reference, and design rationale live in [DESIGN.md](DESIGN.md).
 
@@ -100,7 +100,7 @@ python -m sociallang.cli visualize results/Mafia_0000_....json   # regenerate th
 | `games/village.sl` | 6-10 | Hidden roles + `world {}` -- location gates who hears wolves' night chatter |
 | `games/city.sl` | 5,050 | Large-population + spatial wandering + concurrent LLM tier |
 | `games/outbreak.sl` | 620 | Spread via `nearby()`/`eliminate()`, LLM policy vote changes the outcome |
-| `games/smallville.sl` | 4 | Full Generative Agents loop |
+| `games/smallville.sl` | 4 | Full generative-agent loop (plan, react, talk, reflect) |
 | `games/smallville_mafia.sl` | 6-8 | Mafia layered on the Smallville engine, suspicion grounded in real dialogue |
 
 ## Tests

@@ -2,7 +2,7 @@
 // as its own flat night/day loop (that's games/village.sl). The hidden-role layer --
 // Night's secret kill, Day's accusation vote -- is thin: two phases and a
 // win_condition, structurally identical to village.sl's. Everything else is the same
-// Generative Agents machinery smallville.sl demonstrates, just reused as the
+// generative-agent machinery smallville.sl demonstrates, just reused as the
 // substrate other social townspeople happen to be living their lives on:
 //
 //   - every agent (mafia included) gets a persona, plans a day, decomposes it into
@@ -17,10 +17,9 @@
 //     anyone else, then peel off to the Den at night to whisper a kill vote
 //
 // One round of the loop is one full day: everyone plans, three "hours" of ordinary
-// town life happen, then Night (mafia only), then a Day accusation vote. See
-// DESIGN.md's "Generative Agents architecture" section for what smallville.sl's
-// builtins do; this file only adds the Mafia-specific Night/DayVote/win_condition
-// on top of them.
+// town life happen, then Night (mafia only), then a Day accusation vote. This file
+// only adds the Mafia-specific Night/DayVote/win_condition on top of smallville.sl's
+// builtins.
 sim SmallvilleMafia {
   agents: 6..8
 

@@ -1,16 +1,16 @@
 // A town is two SocialLang files:
 //
-//   environment Smallville { ... }  -- the world: buildings (type, size,
+//   environment OakHill { ... }     -- the world: buildings (type, size,
 //     colors, rooms, furniture), building-type templates, residents (who they
 //     are, their routine, home, work, sleep hours), relationships, events and
 //     news, and how to generate extra residents and buildings for big towns.
-//   behavior Smallville { ... }     -- how residents behave: social rules
+//   behavior OakHill { ... }        -- how residents behave: social rules
 //     (whole town < a group < one resident), daily routines, everyday meals,
 //     free-time choices, how each activity breaks into timed tasks at named
 //     objects, and the emoji / importance of activities.
 //
 // The environment names its behavior file; either can be swapped. Nothing
-// about a town is hard-coded -- the Smallville files ship as examples.
+// about a town is hard-coded -- the Oak Hill files ship as examples.
 //
 // Scopes: the more specific setting wins.
 //   building look:  style { } (every building) < type X { } < building "Y" { }
@@ -36,7 +36,7 @@ struct SocialRules {
   float newsEagerness = 4.0f;      // how much likelier someone with news is to start talking
   float inviteAcceptance = 1.0f;   // multiplies the chance an invitation is accepted
   bool strangersTalk = true;       // whether residents who've never met start conversations
-  float reflectThreshold = 150;    // summed importance before reflecting (paper: 150)
+  float reflectThreshold = 150;    // summed importance before reflecting (default 150)
 };
 
 // ---------------- environment

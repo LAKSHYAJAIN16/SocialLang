@@ -1,4 +1,4 @@
-// Cognition backends for The Ville. The simulation decides *when* an agent
+// Cognition backends for towns. The simulation decides *when* an agent
 // plans, talks, or reflects; a Cognition decides *what*, reading routines,
 // activities, emoji, and importance from the town's behavior file.
 //

@@ -1,4 +1,4 @@
-// Memory-stream scoring from Park et al. 2023, ported from
+// Memory-stream scoring (recency, importance, relevance), ported from
 // sociallang/lang/memory.py: recency (exponential decay by event sequence) +
 // importance (a keyword-density heuristic, or LLM-rated) + relevance (lexical
 // Jaccard overlap with the query).

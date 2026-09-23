@@ -1,7 +1,7 @@
 // Declarative SocialLang files -- environments and behaviors -- share one
 // block syntax, on the same lexer as .sl games:
 //
-//   environment Smallville {          // a node: a word, arguments, a body
+//   environment OakHill {             // a node: a word, arguments, a body
 //     start_hour: 6                   // a field: key, colon, value
 //     building "Hobbs Cafe" {         // a nested node
 //       type: cafe

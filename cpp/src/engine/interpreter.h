@@ -1,6 +1,6 @@
 // Tree-walking interpreter for SocialLang -- a port of
 // sociallang/lang/interpreter.py (via the browser engine) with the same
-// builtins, memory patterns, and Generative Agents mechanisms.
+// builtins, memory patterns, and memory / planning / reflection mechanisms.
 //
 // Performance notes, since a run can mean thousands of agents:
 //   * control flow (return/break) is a returned Flow code, never an exception;

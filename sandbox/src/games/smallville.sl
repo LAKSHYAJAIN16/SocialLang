@@ -1,6 +1,4 @@
-// A full pass through the Generative Agents architecture (Park et al. 2023,
-// "Generative Agents: Interactive Simulacra of Human Behavior" -- the "Smallville"
-// paper), not just its memory-stream half:
+// A full generative-agent loop, not just a memory stream:
 //
 //   - persona            -- set_persona() folds a backstory into every prompt
 //   - planning            -- make_plan() sketches the day in broad strokes,
@@ -11,12 +9,10 @@
 //   - dialogue generation -- converse() runs a real multi-turn exchange between two
 //                            agents' own models when a reaction leads to a meeting
 //   - reflection          -- maybe_reflect() triggers once accumulated importance
-//                            crosses a threshold, same as the paper, rather than on
-//                            a fixed cadence
+//                            crosses a threshold, rather than on a fixed cadence
 //
 // four villagers, a spatial world (homes + three shared/social spots), one 12-hour
-// day. See DESIGN.md's "Generative Agents architecture" section for how each of
-// these maps onto the paper's mechanisms and where this still simplifies them.
+// day. DESIGN.md describes how each builtin works and where it simplifies.
 sim Smallville {
   agents: 4
 
@@ -75,8 +71,8 @@ sim Smallville {
   }
 
   // The recursive decomposition itself: re-decompose only when the last fine-
-  // grained chunk of the current top-level step has run out, matching the paper's
-  // "decompose the next relevant piece, not the whole day up front" approach.
+  // grained chunk of the current top-level step has run out: decompose the next
+  // relevant piece, not the whole day up front.
   fn live_the_hour(a) {
     if count(a.subplan) == 0 {
       decompose_step(a, chunks=3)
