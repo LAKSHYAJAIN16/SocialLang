@@ -29,7 +29,7 @@ void SimController::clear() {
   if (ville_) ville_->cancel = true;
   interp_.reset();
   ville_.reset();
-  villePopulation_ = 0;
+  townLoaded_ = false;
   ++generation_;
   info_ = SimInfo{};
   pendingLog_.clear();
@@ -116,34 +116,32 @@ void SimController::reset() {
   std::string src;
   uint32_t seed;
   Settings s;
-  int pop;
+  bool town;
+  ville::TownSpec spec;
   {
     std::lock_guard<std::mutex> lock(mu_);
     src = source_;
     seed = seed_;
     s = settings_;
-    pop = villePopulation_;
-  }
-  ville::TownSpec spec;
-  {
-    std::lock_guard<std::mutex> lock(mu_);
+    town = townLoaded_;
     spec = villeSpec_;
   }
-  if (pop > 0) loadVille(pop, seed, s, spec);
+  if (town) loadTown(spec, s);
   else if (!src.empty()) load(src, seed, s);
 }
 
 void SimController::setRules(const ville::TownSpec& spec) {
   std::lock_guard<std::mutex> lock(mu_);
-  villeSpec_.rules = spec.rules;
-  villeSpec_.groupRules = spec.groupRules;
-  villeSpec_.residentRules = spec.residentRules;
+  villeSpec_.behavior.rules = spec.behavior.rules;
+  villeSpec_.behavior.groupRules = spec.behavior.groupRules;
+  villeSpec_.behavior.residentRules = spec.behavior.residentRules;
   pendingRules_ = villeSpec_;
   rulesPending_ = true;
 }
 
-void SimController::loadVille(int population, uint32_t seed, const Settings& settings, const ville::TownSpec& spec) {
+void SimController::loadTown(const ville::TownSpec& spec, const Settings& settings) {
   clear();
+  uint32_t seed = spec.env.seed;
   std::vector<std::shared_ptr<Provider>> roster;
   std::vector<std::string> labels;
   for (auto& e : settings.roster)
@@ -162,13 +160,11 @@ void SimController::loadVille(int population, uint32_t seed, const Settings& set
     seed_ = seed;
     settings_ = settings;
     source_.clear();
-    villePopulation_ = population;
+    townLoaded_ = true;
     villeSpec_ = spec;
     rulesPending_ = false;
   }
   ville::VilleOptions o;
-  o.population = population;
-  o.seed = seed;
   o.maxConcurrency = settings.maxConcurrency;
   o.spec = spec;
   auto v = std::make_shared<ville::Ville>(o, roster, [this, gen](const ville::VilleEvent& e) {
@@ -189,8 +185,9 @@ void SimController::loadVille(int population, uint32_t seed, const Settings& set
   std::lock_guard<std::mutex> lock(mu_);
   ville_ = v;
   info_.isVille = true;
-  info_.population = population;
-  info_.programName = "The Ville";
+  info_.population = static_cast<int>(v->agents().size());
+  info_.programName = spec.env.name;
+  info_.env = std::make_shared<ville::EnvironmentSpec>(spec.env);
   info_.rosterLabels = labels;
   info_.hasWorld = true;
   info_.worldW = v->world().width();

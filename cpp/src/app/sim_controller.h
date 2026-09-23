@@ -40,7 +40,7 @@ struct AgentDetail {
   int planCursor = 0;
   std::vector<std::string> subplan;
   int subplanCursor = 0;
-  // The Ville: a resident's full generative-agent state.
+  // Towns: a resident's full state.
   std::string action, emoji, address, utterance, innate, learned, currently, lifestyle, homeName, workName;
   std::vector<std::string> dailyPlan, knows;
   std::vector<std::pair<int, std::string>> memories;  // (type: 0 event, 1 chat, 2 thought, text), newest first
@@ -69,8 +69,9 @@ struct SimInfo {
   std::vector<sl::Location> locations;
   std::shared_ptr<const std::vector<AgentDetail>> details;
   std::vector<std::string> rosterLabels;
-  // The Ville
+  // A town (environment + behavior files)
   bool isVille = false;
+  std::shared_ptr<const ville::EnvironmentSpec> env;  // for the clock and names
   std::string clock;
   long long step = 0;
   std::shared_ptr<const ville::World> villeWorld;      // map + objects (states as of the last snapshot)
@@ -86,8 +87,8 @@ class SimController {
   // Parses and sets up a fresh run (round 0). On a compile or setup error the
   // status becomes CompileError and the message is in info().error.
   void load(const std::string& source, uint32_t seed, const sl::Settings& settings);
-  // The Ville (Generative Agents' Smallville) with `population` residents.
-  void loadVille(int population, uint32_t seed, const sl::Settings& settings, const ville::TownSpec& spec = {});
+  // A town from its environment + behavior files (already parsed).
+  void loadTown(const ville::TownSpec& spec, const sl::Settings& settings);
   // Social rules take effect from the next step, mid-run.
   void setRules(const ville::TownSpec& spec);  // town, group, and resident rules
   void reset();  // same source, seed, and roster
@@ -118,7 +119,7 @@ class SimController {
 
   std::shared_ptr<sl::Interpreter> interp_;
   std::shared_ptr<ville::Ville> ville_;
-  int villePopulation_ = 0;
+  bool townLoaded_ = false;
   ville::TownSpec villeSpec_;
   bool rulesPending_ = false;
   ville::TownSpec pendingRules_;
