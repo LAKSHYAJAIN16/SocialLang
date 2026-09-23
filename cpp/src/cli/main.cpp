@@ -25,6 +25,7 @@
 #include "engine/interpreter.h"
 #include "engine/parser.h"
 #include "providers/settings.h"
+#include "ville/sim.h"
 
 using namespace sl;
 using Clock = std::chrono::steady_clock;
@@ -89,7 +90,48 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 
 }  // namespace
 
+// sl_run --ville [population] [days] [--serial] [--log]: The Ville, headless.
+int runVille(int argc, char** argv) {
+  ville::VilleOptions o;
+  o.population = argc > 2 ? std::atoi(argv[2]) : 25;
+  o.days = argc > 3 ? std::atoi(argv[3]) : 1;
+  bool log = false;
+  for (int i = 2; i < argc; ++i) {
+    if (std::string(argv[i]) == "--serial") o.parallel = false;
+    if (std::string(argv[i]) == "--log") log = true;
+  }
+  std::vector<std::shared_ptr<sl::Provider>> roster = {std::make_shared<sl::MockProvider>(1)};
+  long long counts[6] = {};
+  auto t0 = Clock::now();
+  ville::Ville v(o, roster, [&](const ville::VilleEvent& e) {
+    ++counts[e.kind];
+    if (log && e.kind != 0) std::printf("[%lld] %d %s\n", (long long)e.step, e.kind, e.text.c_str());
+  });
+  auto t1 = Clock::now();
+  while (!v.step()) {}
+  auto t2 = Clock::now();
+  double setup = std::chrono::duration<double, std::milli>(t1 - t0).count();
+  double run = std::chrono::duration<double>(t2 - t1).count();
+  int attending = 0, knowParty = 0;
+  size_t mem = 0;
+  for (auto& a : v.agents()) {
+    attending += !a.attending.empty() && a.p.name != "Isabella Rodriguez";
+    knowParty += std::find(a.knows.begin(), a.knows.end(), 0) != a.knows.end();
+    mem += a.memory.size();
+  }
+  std::printf("The Ville: %zu agents, %dx%d tiles, %zu sectors, %zu objects, setup %.0f ms\n", v.agents().size(),
+              v.world().width(), v.world().height(), v.world().sectors.size(), v.world().objects.size(), setup);
+  std::printf("  simulated %lld steps (%d game days) in %.2f s: %.0f steps/s, %.2f game-hours/s, %.0f agent-hours/s\n",
+              (long long)v.stepCount(), o.days, run, v.stepCount() / run, v.stepCount() / 360.0 / run,
+              v.agents().size() * v.stepCount() / 360.0 / run);
+  std::printf("  actions %lld, plans %lld, dialogue lines %lld, reflections %lld, news heard %lld; memories %zu\n",
+              counts[0], counts[1], counts[2], counts[3], counts[4], mem);
+  std::printf("  party: %d know about it, %d plan to attend\n", knowParty, attending);
+  return 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc >= 2 && std::string(argv[1]) == "--ville") return runVille(argc, argv);
   if (argc < 2) {
     std::fprintf(stderr,
                  "usage: sl_run <game.sl> [--seed N] [--max-rounds N] [--runs N] [--jobs N] [--log] [--models] "

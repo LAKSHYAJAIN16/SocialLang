@@ -23,6 +23,10 @@ add_library(sl_engine STATIC
   src/providers/provider.cpp
   src/providers/http_win.cpp
   src/providers/settings.cpp
+  src/ville/world.cpp
+  src/ville/personas.cpp
+  src/ville/cognition.cpp
+  src/ville/sim.cpp
 )
 target_include_directories(sl_engine PUBLIC src third_party)
 target_link_libraries(sl_engine PUBLIC winhttp crypt32)
@@ -61,6 +65,8 @@ add_executable(SocialSandbox WIN32
   resources/app.rc
 )
 target_include_directories(SocialSandbox PRIVATE src ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+# 32-bit ImWchar: emoji (the residents' activity bubbles) live above U+FFFF.
+target_compile_definitions(SocialSandbox PRIVATE IMGUI_USE_WCHAR32)
 target_link_libraries(SocialSandbox PRIVATE sl_engine d3d11 dxgi d3dcompiler dwmapi shell32 ole32 comdlg32)
 
 # The example games ship next to the exe as the Project panel's Assets folder
