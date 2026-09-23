@@ -1,7 +1,8 @@
-// Customizing the town: how each building looks and is laid out, who the
-// residents are, their relationships, and the social rules they follow. Edits
-// go into the town spec (games/the_ville.town.json). Building and resident
-// edits rebuild the town from the start; social rules apply live, mid-run.
+// Customizing the town from the editor: how each building looks and is laid
+// out, who the residents are, their relationships, and the social rules they
+// follow. Edits are written back into the town's two .sl files -- building,
+// resident and relationship edits into the environment file (and rebuild the
+// town from the start); social rules into the behavior file (applied live).
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -15,10 +16,6 @@ namespace app {
 namespace {
 
 const char* kKinds[] = {"home", "cafe", "pub", "store", "market", "park", "college", "dorm", "town hall", "office"};
-const char* kSizes[] = {"small", "regular", "large"};
-const char* kArchetypes[] = {"cafe_owner", "student", "professor",   "pharmacist", "shopkeeper",
-                             "bartender",  "politician", "comedian", "photographer", "artist",
-                             "writer",     "engineer",  "lawyer",    "mathematician", "retiree"};
 const char* kNotes[] = {"is friends with", "is family with", "is married to", "has a crush on", "is rivals with",
                         "works with", "is neighbors with"};
 
@@ -44,7 +41,8 @@ ImVec4 toColor(unsigned rgb) {
 }
 unsigned fromColor(const float c[3]) {
   auto b = [](float v) { return static_cast<unsigned>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
-  return (b(c[0]) << 16) | (b(c[1]) << 8) | b(c[2]);
+  unsigned rgb = (b(c[0]) << 16) | (b(c[1]) << 8) | b(c[2]);
+  return rgb ? rgb : 0x010101;  // 0 means "inherit"
 }
 
 // Labeled row: label in the left column, widget filling the right.
@@ -57,30 +55,60 @@ void label(const char* text) {
   ImGui::SetNextItemWidth(-1);
 }
 
-// Shows `shown`, writes every keystroke into `target` (the town spec), and
-// returns true when the edit is finished -- the moment to rebuild the town.
-bool editText(const char* id, std::string shown, std::string& target, bool multiline = false) {
-  bool edited = multiline ? ImGui::InputTextMultiline(id, &shown, ImVec2(-1, ImGui::GetTextLineHeight() * 3.4f))
-                          : ImGui::InputText(id, &shown);
-  if (edited) target = shown;
+// Edits `target` in place; true when the edit is finished -- the moment to
+// write the file and rebuild the town.
+bool editText(const char* id, std::string& target, bool multiline = false) {
+  if (multiline) ImGui::InputTextMultiline(id, &target, ImVec2(-1, ImGui::GetTextLineHeight() * 3.4f));
+  else ImGui::InputText(id, &target);
   return ImGui::IsItemDeactivatedAfterEdit();
+}
+
+void scopeButtons(int& scope, const char* const* labels, int n) {
+  for (int k = 0; k < n; ++k) {
+    if (k) ImGui::SameLine(0, 2);
+    bool on = scope == k;
+    ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
+    if (ImGui::Button(labels[k], ImVec2((ImGui::GetContentRegionAvail().x - (n - 1 - k) * 2) / (n - k), 0))) scope = k;
+    ImGui::PopStyleColor();
+  }
+}
+
+bool boldHeader(EditorState& ed, const char* title, bool open = true) {
+  ImGui::PushFont(ed.fonts.bold, 0.0f);
+  bool r = ImGui::CollapsingHeader(title, open ? ImGuiTreeNodeFlags_DefaultOpen : 0);
+  ImGui::PopFont();
+  return r;
+}
+
+ville::ResidentSpec* findResident(EditorState& ed, const std::string& name) {
+  for (auto& r : ed.townSpec.env.residents)
+    if (r.name == name) return &r;
+  return nullptr;
+}
+
+std::string fileName(const std::string& path) { return std::filesystem::path(path).filename().string(); }
+
+// Social rules write straight into the behavior file and apply live.
+void saveRules(EditorState& ed) {
+  try {
+    ed.townSpec.save();
+  } catch (const std::exception& e) {
+    notify(ed, e.what());
+  }
+  refreshAssets(ed);
 }
 
 }  // namespace
 
-// Rebuild the town with the current spec (back to the start), and save it.
+// Write the town's files and rebuild it from the start, keeping the view.
 void applyTownEdits(EditorState& ed, const char* what) {
-  if (!ed.townSpecPath.empty()) ed.townSpec.save(ed.townSpecPath);
-  Selection keep = ed.sel;
   bool wasPlaying = ed.playMode;
   float zoom = ed.zoom;
   ImVec2 cam = ed.camCenter;
-  loadVille(ed, ed.villePopulation);
-  ed.sel = keep;  // building / resident indices are stable across rebuilds
-  ed.fitView = false;
+  saveTown(ed);
   ed.zoom = zoom;
   ed.camCenter = cam;
-  notify(ed, std::string(what) + (wasPlaying ? " -- town restarted from Feb 13, 6:00 am" : ""));
+  notify(ed, std::string(what) + " in " + fileName(ed.townSpec.envPath) + (wasPlaying ? " -- the town restarted" : ""));
 }
 
 void inspectBuilding(EditorState& ed, int sector) {
@@ -88,48 +116,72 @@ void inspectBuilding(EditorState& ed, int sector) {
   const ville::World& w = *ed.info.villeWorld;
   const ville::Sector& s = w.sectors[sector];
   std::string kindName = ville::sectorKindName(s.kind);
+  ville::EnvironmentSpec& env = ed.townSpec.env;
+  ville::BuildingSpec* declared = ed.townSpec.findBuilding(s.key);
   bool changed = false;
 
   ImGui::Spacing();
   ImGui::PushFont(ed.fonts.bold, ImGui::GetStyle().FontSizeBase * 1.15f);
   ImGui::TextUnformatted(s.name.c_str());
   ImGui::PopFont();
-  ImGui::TextDisabled("%s  |  %zu rooms  |  edits rebuild the town", kindName.c_str(), s.arenas.size());
+  ImGui::TextDisabled("%s  |  %zu rooms  |  %s", kindName.c_str(), s.arenas.size(),
+                      declared ? ("building \"" + s.key + "\"").c_str() : "generated");
   ImGui::Separator();
 
-  // Scope: how widely an edit applies. More specific wins.
+  // Scope: how widely an edit applies. The more specific setting wins.
   ImGui::TextDisabled("Apply changes to");
   std::string typeLabel = "Every " + kindName;
   const char* scopes[] = {"This building", typeLabel.c_str(), "Every building"};
-  for (int k = 0; k < 3; ++k) {
-    if (k) ImGui::SameLine(0, 2);
-    bool on = ed.buildingScope == k;
-    ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(scopes[k], ImVec2((ImGui::GetContentRegionAvail().x - (2 - k) * 2) / (3 - k), 0))) ed.buildingScope = k;
-    ImGui::PopStyleColor();
+  if (!declared && ed.buildingScope == 0) ed.buildingScope = 1;
+  ImGui::BeginDisabled(!declared);
+  scopeButtons(ed.buildingScope, scopes, 1);
+  ImGui::EndDisabled();
+  if (!declared) ImGui::SetItemTooltip("Generated buildings follow their type. Declare a building in the environment file to style it alone.");
+  ImGui::SameLine(0, 2);
+  {
+    int sub = ed.buildingScope - 1;
+    const char* rest[] = {scopes[1], scopes[2]};
+    ImGui::PushID("rest");
+    for (int k = 0; k < 2; ++k) {
+      if (k) ImGui::SameLine(0, 2);
+      bool on = sub == k;
+      ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
+      if (ImGui::Button(rest[k], ImVec2((ImGui::GetContentRegionAvail().x - (1 - k) * 2) / (2 - k), 0))) ed.buildingScope = k + 1;
+      ImGui::PopStyleColor();
+    }
+    ImGui::PopID();
   }
-  ville::BuildingSpec& b = ed.buildingScope == 0 ? ed.townSpec.buildings[s.key]
-                           : ed.buildingScope == 1 ? ed.townSpec.typeStyles[kindName]
-                                                   : ed.townSpec.townStyle;
-  ville::BuildingSpec eff = ed.townSpec.styleFor(s.key, kindName);  // what this building shows now
-  const char* from = ed.buildingScope == 0 ? "" : ed.buildingScope == 1 ? "  (all of this type)" : "  (whole town)";
+  ImGui::TextDisabled("writes %s", ed.buildingScope == 0   ? ("building \"" + s.key + "\" { }").c_str()
+                                   : ed.buildingScope == 1 ? ("type " + kindName + " { }").c_str()
+                                                           : "style { }");
+
+  ville::BuildingSpec& b = ed.buildingScope == 0 ? *declared : ed.buildingScope == 1 ? env.types[kindName] : env.style;
+  ville::BuildingSpec probe;
+  probe.name = s.key;
+  probe.kind = kindName;
+  ville::BuildingSpec eff = ed.townSpec.styleFor(declared ? *declared : probe);  // what this building shows now
   ImGui::Spacing();
 
-  ImGui::PushFont(ed.fonts.bold, 0.0f);
-  bool look = ImGui::CollapsingHeader("Look", ImGuiTreeNodeFlags_DefaultOpen);
-  ImGui::PopFont();
-  if (look) {
+  if (boldHeader(ed, "Look")) {
     if (ed.buildingScope == 0) {
       label("Name");
-      if (editText("##name", b.name.empty() ? s.name : b.name, b.name)) {
-        if (b.name == s.key) b.name.clear();
+      std::string oldName = b.name;
+      if (editText("##name", b.name) && !b.name.empty() && b.name != oldName) {
+        // Keep residents and events that point at it.
+        for (auto& r : env.residents) {
+          if (r.home == oldName) r.home = b.name;
+          if (r.work == oldName) r.work = b.name;
+        }
+        for (auto& e : env.events)
+          if (e.at == oldName) e.at = b.name;
         changed = true;
       }
       int kind = static_cast<int>(s.kind);
       label("Type");
       if (ImGui::Combo("##kind", &kind, kKinds, IM_ARRAYSIZE(kKinds))) {
         b.kind = kKinds[kind];
-        b.customRooms = false;  // a new type gets that type's rooms
+        b.customRooms = false;  // a new type brings that type's rooms
+        b.rooms.clear();
         changed = true;
       }
     }
@@ -170,116 +222,112 @@ void inspectBuilding(EditorState& ed, int sector) {
     ImGui::Spacing();
   }
 
-  if (s.kind != ville::SectorKind::Park) {
-    ImGui::PushFont(ed.fonts.bold, 0.0f);
-    bool roomsOpen = ImGui::CollapsingHeader("Rooms & furniture", ImGuiTreeNodeFlags_DefaultOpen);
-    ImGui::PopFont();
-    if (roomsOpen) {
-      if (!b.customRooms) {
-        // Show the current layout; editing starts from it.
-        for (int a : s.arenas) {
-          ImGui::TextUnformatted(w.arenas[a].name.c_str());
-          std::vector<std::string> objs;
-          for (int o : w.arenas[a].objects) objs.push_back(w.objects[o].name);
-          ImGui::SameLine();
-          ImGui::TextDisabled("%s", joinObjects(objs).c_str());
-        }
-        std::string btn = std::string("Customize rooms") + from;
-        if (ImGui::Button(btn.c_str(), ImVec2(-1, 0))) {
-          b.customRooms = true;
-          b.rooms.clear();
-          for (int a : s.arenas) {
-            ville::RoomSpec r;
-            r.name = w.arenas[a].name;
-            for (int o : w.arenas[a].objects) r.objects.push_back(w.objects[o].name);
-            b.rooms.push_back(r);
-          }
-        }
-      } else {
-        ImGui::TextDisabled("First room is the hall the front door opens into. Objects: comma-separated.");
-        int removeAt = -1;
-        for (size_t k = 0; k < b.rooms.size(); ++k) {
-          ImGui::PushID(static_cast<int>(k));
-          ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.34f);
-          if (editText("##room", b.rooms[k].name, b.rooms[k].name)) changed = true;
-          ImGui::SameLine();
-          ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 28);
-          std::string objs = joinObjects(b.rooms[k].objects);
-          if (ImGui::InputText("##objs", &objs)) b.rooms[k].objects = splitObjects(objs);
-          if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
-          ImGui::SameLine();
-          ImGui::BeginDisabled(b.rooms.size() <= 1);
-          if (ImGui::SmallButton("x")) removeAt = static_cast<int>(k);
-          ImGui::EndDisabled();
-          ImGui::SetItemTooltip("Remove this room");
-          ImGui::PopID();
-        }
-        if (removeAt >= 0) {
-          b.rooms.erase(b.rooms.begin() + removeAt);
-          changed = true;
-        }
-        if (ImGui::Button("+ Add room")) {
-          b.rooms.push_back({"new room", {"chair", "table"}});
-          changed = true;
-        }
+  // Rooms: a building can replace its type's layout; a type defines it.
+  bool roomScope = ed.buildingScope == 0 || ed.buildingScope == 1;
+  if (s.kind != ville::SectorKind::Park && roomScope && boldHeader(ed, "Rooms & furniture")) {
+    bool editing = ed.buildingScope == 1 || b.customRooms;
+    if (!editing) {
+      for (int a : s.arenas) {
+        ImGui::TextUnformatted(w.arenas[a].name.c_str());
+        std::vector<std::string> objs;
+        for (int o : w.arenas[a].objects) objs.push_back(w.objects[o].name);
         ImGui::SameLine();
-        if (ImGui::Button("Use standard layout")) {
+        ImGui::TextDisabled("%s", joinObjects(objs).c_str());
+      }
+      if (ImGui::Button("Give this building its own rooms", ImVec2(-1, 0))) {
+        b.customRooms = true;
+        b.rooms.clear();
+        for (int a : s.arenas) {
+          ville::RoomSpec r;
+          r.name = w.arenas[a].name;
+          for (int o : w.arenas[a].objects) r.objects.push_back(w.objects[o].name);
+          b.rooms.push_back(r);
+        }
+        changed = true;
+      }
+    } else {
+      ImGui::TextDisabled("First room is the hall the front door opens into. Objects: comma-separated.");
+      int removeAt = -1;
+      for (size_t k = 0; k < b.rooms.size(); ++k) {
+        ImGui::PushID(static_cast<int>(k));
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.34f);
+        if (editText("##room", b.rooms[k].name)) changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 28);
+        std::string objs = joinObjects(b.rooms[k].objects);
+        if (ImGui::InputText("##objs", &objs)) b.rooms[k].objects = splitObjects(objs);
+        if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(b.rooms.size() <= 1);
+        if (ImGui::SmallButton("x")) removeAt = static_cast<int>(k);
+        ImGui::EndDisabled();
+        ImGui::SetItemTooltip("Remove this room");
+        ImGui::PopID();
+      }
+      if (removeAt >= 0) {
+        b.rooms.erase(b.rooms.begin() + removeAt);
+        changed = true;
+      }
+      if (ImGui::Button("+ Add room")) {
+        b.rooms.push_back({"new room", {"chair", "table"}});
+        changed = true;
+      }
+      if (ed.buildingScope == 0) {
+        ImGui::SameLine();
+        if (ImGui::Button(("Use the " + kindName + " layout").c_str())) {
           b.customRooms = false;
           b.rooms.clear();
           changed = true;
         }
-        ImGui::TextDisabled("Residents look for objects by name: \"bed\" to sleep, \"stove\" to cook,");
-        ImGui::TextDisabled("\"table\" to eat, \"desk\" to work, \"couch\" / \"tv\" to relax.");
       }
-      ImGui::Spacing();
+      if (ed.buildingScope == 1 && b.hasBedroom) {
+        int beds = std::max(1, b.bedrooms);
+        label("Bedrooms");
+        if (ImGui::SliderInt("##beds", &beds, 1, 6)) b.bedrooms = beds;
+        if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+        label("Bedroom objects");
+        std::string objs = joinObjects(b.bedroom.objects);
+        if (ImGui::InputText("##bedobjs", &objs)) b.bedroom.objects = splitObjects(objs);
+        if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+      }
+      ImGui::TextDisabled("Activities look for objects by name (\"bed\", \"stove\", \"desk\"...);");
+      ImGui::TextDisabled("the behavior file says which.");
     }
+    ImGui::Spacing();
   }
 
-  if (ed.buildingScope == 0) {
-    ImGui::PushFont(ed.fonts.bold, 0.0f);
-    bool who = ImGui::CollapsingHeader("Residents", ImGuiTreeNodeFlags_DefaultOpen);
-    ImGui::PopFont();
-    if (who) {
-      int n = 0;
-      for (size_t i = 0; i < ed.info.agents.size(); ++i)
-        if (ed.info.agents[i].team == s.name || ed.info.agents[i].team == s.key) {
-          ++n;
-          ImGui::PushID(static_cast<int>(i));
-          if (ImGui::TextLink(ed.info.agents[i].seat.c_str())) ed.sel = {SelKind::Agent, static_cast<int>(i)};
-          ImGui::PopID();
-        }
-      if (n == 0) ImGui::TextDisabled("Nobody lives here.");
-      ImGui::Spacing();
-    }
+  if (ed.buildingScope == 0 && boldHeader(ed, "Residents")) {
+    int n = 0;
+    for (size_t i = 0; i < ed.info.agents.size(); ++i)
+      if (ed.info.agents[i].team == s.name || ed.info.agents[i].team == s.key) {
+        ++n;
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::TextLink(ed.info.agents[i].seat.c_str())) ed.sel = {SelKind::Agent, static_cast<int>(i)};
+        ImGui::PopID();
+      }
+    if (n == 0) ImGui::TextDisabled("Nobody lives here.");
+    ImGui::Spacing();
   }
 
-  std::string reset = ed.buildingScope == 0 ? "Reset this building"
-                      : ed.buildingScope == 1 ? "Reset every " + kindName
-                                              : "Reset every building's style";
+  std::string reset = ed.buildingScope == 0   ? "Clear this building's own colors and size"
+                      : ed.buildingScope == 1 ? "Clear every " + kindName + "'s colors and size"
+                                              : "Clear the town-wide style";
   if (ImGui::Button(reset.c_str(), ImVec2(-1, 0))) {
-    if (ed.buildingScope == 0) ed.townSpec.buildings.erase(s.key);
-    else if (ed.buildingScope == 1) ed.townSpec.typeStyles.erase(kindName);
-    else ed.townSpec.townStyle = ville::BuildingSpec{};
-    applyTownEdits(ed, "Style reset");
+    b.floorColor = b.wallColor = 0;
+    b.size = -1;
+    applyTownEdits(ed, "Style cleared");
     return;
   }
-  // Drop entries that customize nothing.
-  auto isDefault = [](const ville::BuildingSpec& x) {
-    return x.name.empty() && x.kind.empty() && !x.floorColor && !x.wallColor && x.size < 0 && !x.customRooms;
-  };
-  if (ed.buildingScope == 0 && isDefault(b)) ed.townSpec.buildings.erase(s.key);
-  else if (ed.buildingScope == 1 && isDefault(b)) ed.townSpec.typeStyles.erase(kindName);
-  if (changed) applyTownEdits(ed, ed.buildingScope == 0 ? "Building updated" : ed.buildingScope == 1 ? "Every building of this type updated" : "Every building updated");
+  if (changed) applyTownEdits(ed, ed.buildingScope == 0 ? "Building updated" : ed.buildingScope == 1 ? "Building type updated" : "Town style updated");
 }
 
 // A resident's editable persona and relationships, below their live state.
 void editResident(EditorState& ed, int i) {
   if (!ed.info.villeWorld || !ed.info.details || i >= (int)ed.info.details->size()) return;
   const ville::World& w = *ed.info.villeWorld;
-  const AgentDetail& d = (*ed.info.details)[i];
-  const std::string& name = ed.info.agents[i].seat;
-  bool existed = ed.townSpec.residents.count(name) > 0;
-  ville::ResidentSpec& r = ed.townSpec.residents[name];
+  const std::string name = ed.info.agents[i].seat;
+  ville::EnvironmentSpec& env = ed.townSpec.env;
+  ville::ResidentSpec* r = findResident(ed, name);
   bool changed = false;
 
   if (ImGui::Button(("Interaction rules for " + name.substr(0, name.find(' '))).c_str(), ImVec2(-1, 0))) {
@@ -288,93 +336,84 @@ void editResident(EditorState& ed, int i) {
     ed.rulesResident = name;
     ImGui::SetWindowFocus("Rules");
   }
-  ImGui::PushFont(ed.fonts.bold, 0.0f);
-  bool open = ImGui::CollapsingHeader("Edit resident");
-  ImGui::PopFont();
-  if (open) {
-    ImGui::TextDisabled("Changes rebuild the town from the start.");
-    label("Traits");
-    if (editText("##innate", r.innate.empty() ? d.innate : r.innate, r.innate)) changed = true;
-    label("Background");
-    if (editText("##learned", r.learned.empty() ? d.learned : r.learned, r.learned, true)) changed = true;
-    std::string currently = r.currently;
-    if (currently.empty()) {
-      currently = d.currently;
-      std::string prefix = name + " is ";
-      if (currently.rfind(prefix, 0) == 0) currently = currently.substr(prefix.size());
-      if (!currently.empty() && currently.back() == '.') currently.pop_back();
-    }
-    label("Currently");
-    if (editText("##currently", currently, r.currently, true)) changed = true;
+  if (boldHeader(ed, "Edit resident", false)) {
+    if (!r) {
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextDisabled("%s was made by the generate block in %s. Declare them as a resident there to edit them one by one.",
+                          name.c_str(), fileName(ed.townSpec.envPath).c_str());
+      ImGui::PopTextWrapPos();
+    } else {
+      ImGui::TextDisabled("writes resident \"%s\" { } -- changes restart the town", name.c_str());
+      label("Traits");
+      if (editText("##innate", r->innate)) changed = true;
+      label("Background");
+      if (editText("##learned", r->learned, true)) changed = true;
+      label("Currently");
+      if (editText("##currently", r->currently, true)) changed = true;
+      label("Age");
+      ImGui::SliderInt("##age", &r->age, 5, 100);
+      if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
 
-    std::string role = ed.info.agents[i].role;
-    std::replace(role.begin(), role.end(), ' ', '_');
-    int arch = 0;
-    for (int k = 0; k < IM_ARRAYSIZE(kArchetypes); ++k)
-      if (role == kArchetypes[k] || r.archetype == kArchetypes[k]) arch = k;
-    label("Daily routine");
-    if (ImGui::Combo("##arch", &arch, kArchetypes, IM_ARRAYSIZE(kArchetypes))) r.archetype = kArchetypes[arch], changed = true;
-
-    // Home and workplace pickers over the town's buildings.
-    std::vector<const char*> homes, works = {"home (works from home)"};
-    std::vector<std::string> homeKeys, workKeys = {"home"};
-    for (auto& s : w.sectors) {
-      if (s.kind == ville::SectorKind::Home || s.kind == ville::SectorKind::Dorm) {
-        homes.push_back(s.name.c_str());
-        homeKeys.push_back(s.key);
-      } else {
-        works.push_back(s.name.c_str());
-        workKeys.push_back(s.key);
+      // Routine: any routine the behavior file defines.
+      label("Daily routine");
+      if (ImGui::BeginCombo("##routine", r->routine.c_str())) {
+        for (auto& [key, _] : ed.townSpec.behavior.routines)
+          if (ImGui::Selectable(key.c_str(), key == r->routine)) r->routine = key, changed = true;
+        ImGui::EndCombo();
       }
-    }
-    int home = 0, work = 0;
-    for (size_t k = 0; k < homeKeys.size(); ++k)
-      if (w.sectors[w.findSector(homeKeys[k])].name == d.homeName) home = static_cast<int>(k);
-    for (size_t k = 1; k < workKeys.size(); ++k)
-      if (w.sectors[w.findSector(workKeys[k])].name == d.workName) work = static_cast<int>(k);
-    label("Lives at");
-    if (ImGui::Combo("##home", &home, homes.data(), static_cast<int>(homes.size()))) r.home = homeKeys[home], changed = true;
-    label("Works at");
-    if (ImGui::Combo("##work", &work, works.data(), static_cast<int>(works.size()))) r.work = workKeys[work], changed = true;
+      ImGui::SetItemTooltip("Routines are defined in %s", fileName(ed.townSpec.behaviorPath).c_str());
 
-    int wake = r.wakeHour >= 0 ? r.wakeHour : 7, sleep = r.sleepHour >= 0 ? r.sleepHour : 23;
-    label("Wakes up");
-    if (ImGui::SliderInt("##wake", &wake, 4, 11, "%d am")) r.wakeHour = wake;
-    if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
-    label("Goes to bed");
-    if (ImGui::SliderInt("##sleep", &sleep, 20, 24, "%d:00")) r.sleepHour = sleep;
-    if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
-    float soc = r.sociability >= 0 ? r.sociability : 0.5f;
-    label("Sociability");
-    if (ImGui::SliderFloat("##soc", &soc, 0.0f, 1.0f, soc < 0.35f ? "reserved (%.2f)" : soc < 0.7f ? "average (%.2f)" : "outgoing (%.2f)"))
-      r.sociability = soc;
-    if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
-    if (existed && ImGui::Button("Reset resident", ImVec2(-1, 0))) {
-      ed.townSpec.residents.erase(name);
-      applyTownEdits(ed, "Resident reset");
-      return;
+      // Home and workplace pickers over the town's buildings.
+      label("Lives at");
+      if (ImGui::BeginCombo("##home", r->home.c_str())) {
+        for (auto& s : w.sectors)
+          if ((s.kind == ville::SectorKind::Home || s.kind == ville::SectorKind::Dorm) &&
+              ImGui::Selectable(s.key.c_str(), s.key == r->home))
+            r->home = s.key, r->bedroom.clear(), changed = true;
+        ImGui::EndCombo();
+      }
+      label("Works at");
+      if (ImGui::BeginCombo("##work", r->work.empty() ? "home" : r->work.c_str())) {
+        if (ImGui::Selectable("home", r->work.empty() || r->work == "home")) r->work = "home", changed = true;
+        for (auto& s : w.sectors)
+          if (s.kind != ville::SectorKind::Home && s.kind != ville::SectorKind::Dorm &&
+              ImGui::Selectable(s.key.c_str(), s.key == r->work))
+            r->work = s.key, changed = true;
+        ImGui::EndCombo();
+      }
+      label("Wakes up");
+      ImGui::SliderInt("##wake", &r->wakeHour, 4, 11, "%d am");
+      if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+      label("Goes to bed");
+      ImGui::SliderInt("##sleep", &r->sleepHour, 20, 24, "%d:00");
+      if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+      float& soc = r->sociability;
+      label("Sociability");
+      ImGui::SliderFloat("##soc", &soc, 0.0f, 1.0f, soc < 0.35f ? "reserved (%.2f)" : soc < 0.7f ? "average (%.2f)" : "outgoing (%.2f)");
+      if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
+      ImGui::Spacing();
+      if (ImGui::Button(("Remove " + name + " from the town").c_str(), ImVec2(-1, 0))) {
+        env.residents.erase(env.residents.begin() + (r - env.residents.data()));
+        std::erase_if(env.relationships, [&](const ville::RelationshipSpec& x) { return x.a == name || x.b == name; });
+        ed.sel = {};
+        applyTownEdits(ed, "Resident removed");
+        return;
+      }
     }
     ImGui::Spacing();
   }
-  bool isDefault = r.innate.empty() && r.learned.empty() && r.currently.empty() && r.archetype.empty() && r.home.empty() &&
-                   r.work.empty() && r.wakeHour < 0 && r.sleepHour < 0 && r.sociability < 0;
-  if (isDefault) ed.townSpec.residents.erase(name);  // r is dangling after this
   if (changed) {
     applyTownEdits(ed, "Resident updated");
     return;
   }
 
   // Relationships: who they already know, and how.
-  ImGui::PushFont(ed.fonts.bold, 0.0f);
-  bool relOpen = ImGui::CollapsingHeader("Edit relationships");
-  ImGui::PopFont();
-  if (!relOpen) return;
-  ImGui::TextDisabled("Residents start out knowing each other; closeness raises how often they talk,");
-  ImGui::TextDisabled("and the note shapes how they greet each other (crush, rivals, friends...).");
+  if (!boldHeader(ed, "Edit relationships", false)) return;
+  ImGui::TextDisabled("Closeness raises how often they talk; the note shapes how they greet each other.");
   bool relChanged = false;
   int removeAt = -1;
-  for (size_t k = 0; k < ed.townSpec.relationships.size(); ++k) {
-    auto& rel = ed.townSpec.relationships[k];
+  for (size_t k = 0; k < env.relationships.size(); ++k) {
+    auto& rel = env.relationships[k];
     if (rel.a != name && rel.b != name) continue;
     ImGui::PushID(static_cast<int>(k));
     bool mine = rel.a == name;
@@ -395,7 +434,7 @@ void editResident(EditorState& ed, int i) {
     ImGui::PopID();
   }
   if (removeAt >= 0) {
-    ed.townSpec.relationships.erase(ed.townSpec.relationships.begin() + removeAt);
+    env.relationships.erase(env.relationships.begin() + removeAt);
     relChanged = true;
   }
   static int pick = 0;
@@ -415,40 +454,37 @@ void editResident(EditorState& ed, int i) {
   if (!others.empty()) ImGui::Combo("##newwho", &pick, others.data(), static_cast<int>(others.size()));
   ImGui::SameLine();
   if (ImGui::Button("Add") && !others.empty()) {
-    ed.townSpec.relationships.push_back({name, ed.info.agents[otherIdx[pick]].seat, 5, kNotes[pickNote]});
+    env.relationships.push_back({name, ed.info.agents[otherIdx[pick]].seat, 5, kNotes[pickNote]});
     relChanged = true;
   }
   if (relChanged) applyTownEdits(ed, "Relationships updated");
 }
 
-// Rules panel: how residents interact, applied live. Scope: the whole town,
-// a group (everyone with one daily routine), or one resident -- the most
-// specific rules that exist for a resident are the ones they follow.
+// Rules panel: how residents interact, applied live and saved to the
+// behavior file. Scope: the whole town, a group (everyone on one routine), or
+// one resident -- the most specific rules that exist for a resident win.
 void drawRules(EditorState& ed) {
   if (!ed.showRules) return;
   if (!beginPanel("Rules", &ed.showRules)) {
     ImGui::End();
     return;
   }
-  if (!ed.info.isVille) {
-    ImGui::TextDisabled("Social rules apply to The Ville. Load it from Scenarios.");
+  if (!ed.info.isVille || ed.townAsset < 0) {
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextDisabled("Load a town from Scenarios to edit how its residents interact.");
+    ImGui::PopTextWrapPos();
     ImGui::End();
     return;
   }
+  ville::BehaviorSpec& beh = ed.townSpec.behavior;
   ImGui::PushTextWrapPos(0);
-  ImGui::TextDisabled("How residents interact. Changes apply immediately, even mid-run, and save with the town.");
+  ImGui::TextDisabled("How residents interact. Changes apply immediately, even mid-run, and save to %s.",
+                      fileName(ed.townSpec.behaviorPath).c_str());
   ImGui::PopTextWrapPos();
 
-  // Scope picker
   const char* scopes[] = {"Whole town", "A group", "One resident"};
-  for (int k = 0; k < 3; ++k) {
-    if (k) ImGui::SameLine(0, 2);
-    bool on = ed.rulesScope == k;
-    ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(scopes[k], ImVec2((ImGui::GetContentRegionAvail().x - (2 - k) * 2) / (3 - k), 0))) ed.rulesScope = k;
-    ImGui::PopStyleColor();
-  }
-  // Groups are the daily routines present in this town.
+  scopeButtons(ed.rulesScope, scopes, 3);
+  // Groups are the routines residents of this town follow.
   std::vector<std::string> groups;
   for (auto& a : ed.info.agents) {
     std::string g = a.role;
@@ -460,10 +496,16 @@ void drawRules(EditorState& ed) {
   if (ed.rulesResident.empty() && !ed.info.agents.empty()) ed.rulesResident = ed.info.agents[0].seat;
   if (ed.sel.kind == SelKind::Agent && ed.sel.index >= 0 && ed.sel.index < (int)ed.info.agents.size() && ed.rulesScope == 2)
     ed.rulesResident = ed.info.agents[ed.sel.index].seat;
+  auto groupOf = [&](const std::string& resident) {
+    int idx = seatIndex(ed, resident);
+    std::string g = idx >= 0 ? ed.info.agents[idx].role : "";
+    std::replace(g.begin(), g.end(), ' ', '_');
+    return g;
+  };
 
-  ville::SocialRules* target = &ed.townSpec.rules;
+  ville::SocialRules* target = &beh.rules;
   std::map<std::string, ville::SocialRules>* table = nullptr;
-  std::string key, who;
+  std::string key, who, block = "rules { }";
   if (ed.rulesScope == 1) {
     label("Group");
     if (ImGui::BeginCombo("##group", ed.rulesGroup.c_str())) {
@@ -471,9 +513,10 @@ void drawRules(EditorState& ed) {
         if (ImGui::Selectable(g.c_str(), g == ed.rulesGroup)) ed.rulesGroup = g;
       ImGui::EndCombo();
     }
-    table = &ed.townSpec.groupRules;
+    table = &beh.groupRules;
     key = ed.rulesGroup;
     who = "every " + key;
+    block = "rules " + key + " { }";
   } else if (ed.rulesScope == 2) {
     label("Resident");
     if (ImGui::BeginCombo("##resident", ed.rulesResident.c_str())) {
@@ -484,41 +527,24 @@ void drawRules(EditorState& ed) {
         }
       ImGui::EndCombo();
     }
-    table = &ed.townSpec.residentRules;
+    table = &beh.residentRules;
     key = ed.rulesResident;
     who = key;
+    block = "rules \"" + key + "\" { }";
   }
-  bool changed = false;
   if (table) {
     auto it = table->find(key);
     if (it == table->end()) {
       ImGui::Spacing();
       ImGui::PushTextWrapPos(0);
       ImGui::TextDisabled("%s follows %s rules.", who.c_str(),
-                          ed.rulesScope == 2 && ed.townSpec.groupRules.count([&] {
-                            int idx = seatIndex(ed, key);
-                            std::string g = idx >= 0 ? ed.info.agents[idx].role : "";
-                            std::replace(g.begin(), g.end(), ' ', '_');
-                            return g;
-                          }())
-                              ? "their group's"
-                              : "the town's");
+                          ed.rulesScope == 2 && beh.groupRules.count(groupOf(key)) ? "their group's" : "the town's");
       ImGui::PopTextWrapPos();
       if (ImGui::Button(("Give " + who + " their own rules").c_str(), ImVec2(-1, 0))) {
         // Start from whatever they follow now.
-        ville::SocialRules base = ed.townSpec.rules;
-        if (ed.rulesScope == 2) {
-          int idx = seatIndex(ed, key);
-          std::string g = idx >= 0 ? ed.info.agents[idx].role : "";
-          std::replace(g.begin(), g.end(), ' ', '_');
-          base = ed.townSpec.rulesFor(key, g);
-        }
-        (*table)[key] = base;
-        changed = true;
-      }
-      if (changed) {
+        (*table)[key] = ed.rulesScope == 2 ? ed.townSpec.rulesFor(key, groupOf(key)) : beh.rules;
         ed.sim.setRules(ed.townSpec);
-        if (!ed.townSpecPath.empty()) ed.townSpec.save(ed.townSpecPath);
+        saveRules(ed);
       }
       ImGui::End();
       return;
@@ -527,55 +553,67 @@ void drawRules(EditorState& ed) {
     if (ImGui::Button(("Remove " + who + "'s own rules").c_str(), ImVec2(-1, 0))) {
       table->erase(it);
       ed.sim.setRules(ed.townSpec);
-      if (!ed.townSpecPath.empty()) ed.townSpec.save(ed.townSpecPath);
+      saveRules(ed);
       ImGui::End();
       return;
     }
   }
+  ImGui::TextDisabled("writes %s", block.c_str());
 
   ville::SocialRules& r = *target;
   ville::SocialRules before = r;
+  bool done = false;  // an edit finished: write the file
+  auto finished = [&] { done |= ImGui::IsItemDeactivatedAfterEdit(); };
   sectionHeader(ed, "Conversation");
   label("Chattiness");
   ImGui::SliderFloat("##chat", &r.chattiness, 0.0f, 5.0f, "%.2fx");
+  finished();
   ImGui::SetItemTooltip("How likely they are to start talking with someone they meet");
   label("Time between chats");
   ImGui::SliderFloat("##cool", &r.chatCooldownHours, 0.25f, 12.0f, "%.1f game-hours");
+  finished();
   ImGui::SetItemTooltip("How long before they talk to the same person again");
   label("Conversation length");
   static const char* kLen[] = {"brief", "normal", "chatty", "long"};
   ImGui::SliderInt("##len", &r.conversationLength, 0, 3, kLen[std::clamp(r.conversationLength, 0, 3)]);
+  finished();
   label("Talks to strangers");
   ImGui::Checkbox("##strangers", &r.strangersTalk);
+  finished();
   ImGui::SameLine();
   ImGui::TextDisabled(r.strangersTalk ? "yes" : "only to people they already know");
   sectionHeader(ed, "News and invitations");
   label("News eagerness");
   ImGui::SliderFloat("##news", &r.newsEagerness, 1.0f, 10.0f, "%.1fx");
+  finished();
   ImGui::SetItemTooltip("How much likelier they are to start talking when they have news the other hasn't heard");
   label("Invite acceptance");
   ImGui::SliderFloat("##invite", &r.inviteAcceptance, 0.0f, 2.0f, "%.2fx");
-  ImGui::SetItemTooltip("Multiplies the chance they accept an invitation (Isabella's party)");
+  finished();
+  ImGui::SetItemTooltip("Multiplies the chance they accept an invitation to an event");
   sectionHeader(ed, "Perception and memory");
   label("Vision radius");
   ImGui::SliderInt("##vision", &r.visionRadius, 1, 12, "%d tiles");
+  finished();
   label("Attention");
   ImGui::SliderInt("##att", &r.attention, 1, 10, "%d observations / step");
+  finished();
   label("Reflect after");
   ImGui::SliderFloat("##refl", &r.reflectThreshold, 20.0f, 500.0f, "%.0f importance");
-  ImGui::SetItemTooltip("Summed importance of new memories before reflecting (the paper uses 150)");
+  finished();
+  ImGui::SetItemTooltip("Summed importance of new memories before a resident stops to reflect");
   ImGui::Spacing();
-  if (ed.rulesScope == 0 && ImGui::Button("Reset to the paper's defaults", ImVec2(-1, 0))) r = ville::SocialRules{};
-  changed = changed || std::memcmp(&before, &r, sizeof r) != 0;
-  if (changed) {
-    ed.sim.setRules(ed.townSpec);
-    if (!ed.townSpecPath.empty()) ed.townSpec.save(ed.townSpecPath);
+  if (ed.rulesScope == 0 && ImGui::Button("Reset to default rules", ImVec2(-1, 0))) {
+    r = ville::SocialRules{};
+    done = true;
   }
+  if (std::memcmp(&before, &r, sizeof r) != 0) ed.sim.setRules(ed.townSpec);
+  if (done) saveRules(ed);
   // Who has their own rules, at a glance.
-  if (!ed.townSpec.groupRules.empty() || !ed.townSpec.residentRules.empty()) {
+  if (!beh.groupRules.empty() || !beh.residentRules.empty()) {
     sectionHeader(ed, "Overrides");
-    for (auto& [g, _] : ed.townSpec.groupRules) ImGui::BulletText("group: every %s", g.c_str());
-    for (auto& [n, _] : ed.townSpec.residentRules) ImGui::BulletText("resident: %s", n.c_str());
+    for (auto& [g, _] : beh.groupRules) ImGui::BulletText("group: every %s", g.c_str());
+    for (auto& [n, _] : beh.residentRules) ImGui::BulletText("resident: %s", n.c_str());
   }
   ImGui::End();
 }
