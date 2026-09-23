@@ -22,6 +22,12 @@ const char* sectorKindName(SectorKind k) {
   return "?";
 }
 
+SectorKind sectorKindFromName(const std::string& name, SectorKind fallback) {
+  for (int k = 0; k <= static_cast<int>(SectorKind::Office); ++k)
+    if (name == sectorKindName(static_cast<SectorKind>(k))) return static_cast<SectorKind>(k);
+  return fallback;
+}
+
 namespace {
 
 constexpr int kCellW = 28, kCellH = 20, kRoad = 2;
@@ -108,6 +114,14 @@ const std::vector<Plan>& villePlaces() {
   return p;
 }
 
+}  // namespace
+
+std::vector<std::pair<std::string, std::vector<std::string>>> defaultRooms(SectorKind k, int bedrooms) {
+  return roomsFor(k, bedrooms);
+}
+
+namespace {
+
 uint32_t mix(uint32_t x) {
   x ^= x >> 16;
   x *= 0x7feb352du;
@@ -127,6 +141,7 @@ void World::fill(const Rect& r, Tile t) {
 
 int World::addSector(const std::string& name, SectorKind kind, const Rect& r, int doorX, int doorY) {
   Sector s;
+  s.key = name;
   s.name = name;
   s.kind = kind;
   s.rect = r;
@@ -242,7 +257,7 @@ void World::park(int sectorId, uint32_t seed) {
   }
 }
 
-void World::generate(int population, uint32_t seed) {
+void World::generate(int population, uint32_t seed, const TownSpec* spec) {
   sectors.clear();
   arenas.clear();
   objects.clear();
@@ -294,27 +309,60 @@ void World::generate(int population, uint32_t seed) {
   for (int i = 0; i < n; ++i) {
     int cx = (i % cols) * kCellW + kRoad, cy = (i / cols) * kCellH + kRoad;
     int cellW = kCellW - kRoad, cellH = kCellH - kRoad;
-    const Plan& p = plan[i];
+    Plan p = plan[i];
+    // Customizations from the town spec: type, size, colors, name, rooms.
+    BuildingSpec style;
+    const BuildingSpec* custom = nullptr;
+    if (spec) {
+      auto it = spec->buildings.find(p.name);
+      if (it != spec->buildings.end() && !it->second.kind.empty()) p.kind = sectorKindFromName(it->second.kind, p.kind);
+      style = spec->styleFor(p.name, sectorKindName(p.kind));  // town < type < this building
+      custom = &style;
+    }
+    auto finish = [&](int id) {
+      if (!custom) return;
+      if (!custom->name.empty()) sectors[id].name = custom->name;
+      sectors[id].floorColor = custom->floorColor;
+      sectors[id].wallColor = custom->wallColor;
+    };
     if (p.kind == SectorKind::Park) {
       Rect r{cx + 1, cy + 1, cellW - 2, cellH - 2};
       int id = addSector(p.name, p.kind, r, r.cx(), r.y + r.h - 1);
       park(id, seed + i);
+      finish(id);
       continue;
     }
     bool big = p.kind == SectorKind::College || p.kind == SectorKind::Dorm || p.kind == SectorKind::Cafe ||
                p.kind == SectorKind::Market || p.kind == SectorKind::TownHall;
+    int size = custom && custom->size >= 0 ? custom->size : 1;
+    if (size == 2) big = true;
     int bw = big ? cellW - 2 : cellW - 6, bh = big ? cellH - 4 : cellH - 6;
+    if (size == 0) {
+      bw = cellW - 10;
+      bh = cellH - 8;
+    }
     Rect r{cx + (cellW - bw) / 2, cy + 1, bw, bh};
     int doorX = r.cx(), doorY = r.y + r.h - 1;
     int id = addSector(p.name, p.kind, r, doorX, doorY);
     int bedrooms = p.name == "Lin family's house" ? 3 : p.name == "Artist's co-living space" ? 3 : 2;
-    building(id, roomsFor(p.kind, bedrooms));
+    Rooms rooms = roomsFor(p.kind, bedrooms);
+    if (custom && custom->customRooms && !custom->rooms.empty()) {
+      rooms.clear();
+      for (auto& r : custom->rooms) rooms.push_back({r.name.empty() ? "room" : r.name, r.objects});
+      // Each back room needs at least 3 tiles of width.
+      size_t maxRooms = static_cast<size_t>((bw - 2 + 1) / 4) + 1;
+      if (rooms.size() > maxRooms) rooms.resize(maxRooms);
+    }
+    building(id, rooms);
+    finish(id);
     // A short walk from the door down to the street.
     for (int y = doorY + 1; y < cy + cellH; ++y) tiles_[y * w_ + doorX] = Tile::Plaza;
   }
 }
 
 int World::findSector(const std::string& name) const {
+  for (size_t i = 0; i < sectors.size(); ++i)
+    if (sectors[i].key == name) return static_cast<int>(i);
   for (size_t i = 0; i < sectors.size(); ++i)
     if (sectors[i].name == name) return static_cast<int>(i);
   return -1;

@@ -30,6 +30,7 @@
 
 #include "engine/rng.h"
 #include "providers/provider.h"
+#include "ville/spec.h"
 #include "ville/world.h"
 
 namespace ville {
@@ -109,6 +110,7 @@ struct Agent {
   size_t chatNext = 0;
   std::unordered_map<int, int64_t> lastChat;
   std::unordered_map<int, float> familiarity;
+  std::unordered_map<int, std::string> relationNote;  // "has a crush on", "rivals", ... (from the town spec)
 
   // Memory
   std::vector<MemoryNode> memory;
@@ -138,9 +140,7 @@ struct VilleOptions {
   uint32_t seed = 1;
   int days = 2;                 // the run ends after this many game days
   int startHour = 6;            // day 1 starts at this hour (Feb 13, 2023)
-  float reflectThreshold = 150;  // summed importance before reflecting (paper: 150)
-  int visionRadius = 4;         // tiles
-  int attention = 3;            // new observations per step (the paper's attention bandwidth)
+  TownSpec spec;                // building / resident customizations and the social rules
   bool parallel = true;         // perceive / plan / move on the worker pool
   bool logActions = true;       // one log line per task start (auto-off past 200 agents)
   int maxConcurrency = 8;
@@ -167,6 +167,17 @@ class Ville {
   const std::vector<Agent>& agents() const { return agents_; }
   const std::vector<News>& news() const { return news_; }
   const VilleOptions& options() const { return opts_; }
+  const SocialRules& rules() const { return opts_.spec.rules; }
+  // The rules one resident follows (their own, their group's, or the town's).
+  const SocialRules& rulesFor(int agent) const {
+    return opts_.spec.rulesFor(agents_[agent].p.name, agents_[agent].p.archetype);
+  }
+  // Applied between steps (the caller must not be inside step()).
+  void setRules(const TownSpec& spec) {
+    opts_.spec.rules = spec.rules;
+    opts_.spec.groupRules = spec.groupRules;
+    opts_.spec.residentRules = spec.residentRules;
+  }
   bool llmCognition() const { return llm_; }
 
   std::atomic<bool> cancel{false};

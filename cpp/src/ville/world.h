@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "ville/spec.h"
+
 namespace ville {
 
 enum class Tile : uint8_t { Grass, Road, Floor, Wall, Door, Tree, Water, Plaza };
@@ -38,7 +40,9 @@ struct Arena {
 };
 
 struct Sector {
-  std::string name;  // "Hobbs Cafe", "Lin family's house", ...
+  std::string key;   // original name: what residents' homes / workplaces and town specs refer to
+  std::string name;  // display name ("Hobbs Cafe", "Lin family's house", ...), may be customized
+  unsigned floorColor = 0, wallColor = 0;  // 0xRRGGBB overrides, 0 = default
   SectorKind kind = SectorKind::Home;
   Rect rect;
   std::vector<int> arenas;
@@ -50,7 +54,7 @@ class World {
   // Builds a town with room for `population` residents. With 25 it mirrors
   // the paper's cast of places; beyond that it keeps adding blocks of homes
   // and businesses.
-  void generate(int population, uint32_t seed);
+  void generate(int population, uint32_t seed, const TownSpec* spec = nullptr);
 
   int width() const { return w_; }
   int height() const { return h_; }
@@ -96,5 +100,8 @@ class World {
 };
 
 const char* sectorKindName(SectorKind k);
+SectorKind sectorKindFromName(const std::string& name, SectorKind fallback);
+// The standard room layout for a kind of building: (room, objects), hall first.
+std::vector<std::pair<std::string, std::vector<std::string>>> defaultRooms(SectorKind k, int bedrooms = 2);
 
 }  // namespace ville

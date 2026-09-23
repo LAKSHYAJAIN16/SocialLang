@@ -326,15 +326,19 @@ class PersonaCognition : public Cognition {
     const Agent& B = v.agents()[b];
     if (A.asleep || B.asleep || A.chatWith >= 0 || B.chatWith >= 0) return false;
     if (has(A.action, "sleep") || has(B.action, "sleep")) return false;
+    const SocialRules& rules = v.rulesFor(a);
     auto it = A.lastChat.find(b);
-    if (it != A.lastChat.end() && v.stepCount() - it->second < 3 * kStepsPerHour) return false;
+    if (it != A.lastChat.end() && v.stepCount() - it->second < static_cast<int64_t>(rules.chatCooldownHours * kStepsPerHour))
+      return false;
     float fam = 0;
     if (auto f = A.familiarity.find(b); f != A.familiarity.end()) fam = f->second;
+    if (fam == 0 && !rules.strangersTalk) return false;
+    if (auto n = A.relationNote.find(b); n != A.relationNote.end() && has(lower(n->second), "rival")) fam = 0;
     // Someone with news the other hasn't heard is much keener to talk.
     bool hasNews = false;
     for (int n : A.knows)
       if (std::find(B.knows.begin(), B.knows.end(), n) == B.knows.end()) hasNews = true;
-    double p = 0.012 * (0.4 + A.p.sociability) * (1 + fam) * (hasNews ? 4.0 : 1.0);
+    double p = 0.012 * rules.chattiness * (0.4 + A.p.sociability) * (1 + fam) * (hasNews ? rules.newsEagerness : 1.0);
     return rng.random() < p;
   }
 
@@ -345,8 +349,13 @@ class PersonaCognition : public Cognition {
     int h = v.minuteOfDay() / 60;
     const char* hello = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
     bool met = A.familiarity.count(b) > 0;
-    out.push_back({a, met ? std::string(hello) + ", " + B.p.first + "! How's your day going?"
-                          : "Hi, I don't think we've met -- I'm " + A.p.first + ". " + hello + "!"});
+    std::string note;
+    if (auto nt = A.relationNote.find(b); nt != A.relationNote.end()) note = lower(nt->second);
+    std::string greet = std::string(hello) + ", " + B.p.first + "! How's your day going?";
+    if (has(note, "crush")) greet = "Oh -- hi, " + B.p.first + "! I was, um, hoping I'd run into you.";
+    else if (has(note, "rival")) greet = B.p.first + ". Didn't expect to see you here.";
+    else if (has(note, "friend") || has(note, "family") || has(note, "married")) greet = "Hey " + B.p.first + "! Always good to see you.";
+    out.push_back({a, met ? greet : "Hi, I don't think we've met -- I'm " + A.p.first + ". " + hello + "!"});
     out.push_back({b, met ? "Hey " + A.p.first + "! Pretty good -- I've been " + doing(B) + "."
                           : "Nice to meet you, " + A.p.first + ". I'm " + B.p.first + ". I've been " + doing(B) + "."});
     if (news >= 0) {
@@ -358,7 +367,7 @@ class PersonaCognition : public Cognition {
         out.push_back({a, "Did you hear? " + t});
       }
       if (n.invite) {
-        double yes = 0.45 + 0.4 * B.p.sociability;
+        double yes = std::clamp((0.45 + 0.4 * B.p.sociability) * v.rulesFor(b).inviteAcceptance, 0.0, 1.0);
         out.push_back({b, rng.random() < yes ? "Oh, that sounds lovely -- I'll be there!"
                                              : "Thanks for telling me! I'm not sure I can make it, but I'll try."});
       } else {
@@ -378,6 +387,22 @@ class PersonaCognition : public Cognition {
       out.push_back({a, !memLine.empty() && rng.random() < 0.5 ? memLine + " How did that go?"
                                                              : "I've been " + A.p.currently + "."});
       out.push_back({b, "That sounds interesting! As for me, I've been " + B.p.currently + "."});
+    }
+    // Longer conversations (Rules > Conversation length): more exchanges,
+    // drawing on what each remembers from today.
+    for (int k = 0; k < v.rulesFor(a).conversationLength; ++k) {
+      int speaker = k % 2 ? b : a, listener = k % 2 ? a : b;
+      const Agent& S = v.agents()[speaker];
+      auto mem = v.retrieve(speaker, "today", 4);
+      std::string said;
+      for (int m : mem)
+        if (S.memory[m].type != NodeType::Thought && S.memory[m].person != listener && S.memory[m].person >= 0) {
+          said = "Earlier I saw " + S.memory[m].subject + " " + S.memory[m].predicate + ".";
+          break;
+        }
+      if (said.empty()) said = k % 2 ? "Anything exciting planned for later?" : "It's been a pretty full day so far.";
+      out.push_back({speaker, said});
+      out.push_back({listener, rng.random() < 0.5 ? "Oh, interesting." : "Ha, I know what you mean."});
     }
     out.push_back({a, "Well, I should get back to " + doing(A) + ". See you around, " + B.p.first + "!"});
     out.push_back({b, "Bye, " + A.p.first + "!"});

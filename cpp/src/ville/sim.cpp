@@ -23,7 +23,7 @@ Ville::Ville(const VilleOptions& opts, const std::vector<std::shared_ptr<sl::Pro
              std::function<void(const VilleEvent&)> sink)
     : opts_(opts), sink_(std::move(sink)), roster_(roster) {
   if (opts_.population > 200) opts_.logActions = false;
-  world_.generate(opts_.population, opts_.seed);
+  world_.generate(opts_.population, opts_.seed, &opts_.spec);
   for (auto& p : roster_) llm_ = llm_ || p->wantsContext();
   cog_ = llm_ ? makeLlmCognition(opts_.maxConcurrency) : makePersonaCognition();
   setupAgents();
@@ -33,6 +33,26 @@ Ville::~Ville() = default;
 
 void Ville::setupAgents() {
   auto personas = makePersonas(world_, opts_.population, opts_.seed);
+  // Resident edits from the town spec.
+  for (auto& p : personas) {
+    auto it = opts_.spec.residents.find(p.name);
+    if (it == opts_.spec.residents.end()) continue;
+    const ResidentSpec& r = it->second;
+    if (!r.innate.empty()) p.innate = r.innate;
+    if (!r.learned.empty()) p.learned = r.learned;
+    if (!r.currently.empty()) p.currently = r.currently;
+    if (!r.archetype.empty()) p.archetype = r.archetype;
+    if (!r.home.empty() && world_.findSector(r.home) >= 0) p.home = world_.findSector(r.home);
+    if (!r.work.empty()) p.work = r.work == "home" ? -1 : world_.findSector(r.work);
+    if (r.wakeHour >= 0) p.wakeHour = r.wakeHour;
+    if (r.sleepHour >= 0) p.sleepHour = r.sleepHour;
+    if (r.sociability >= 0) p.sociability = r.sociability;
+    if (r.wakeHour >= 0 || r.sleepHour >= 0) {
+      int s = p.sleepHour % 24;
+      p.lifestyle = p.first + " goes to bed around " + std::to_string(s % 12 == 0 ? 12 : s % 12) + (s < 12 ? " am" : " pm") +
+                    " and wakes up around " + std::to_string(p.wakeHour) + " am.";
+    }
+  }
   news_ = seedNews(world_, personas);
   agents_.resize(personas.size());
   for (size_t i = 0; i < personas.size(); ++i) {
@@ -66,6 +86,25 @@ void Ville::setupAgents() {
     m.poignancy = 8;
     m.news = static_cast<int>(n);
     o.memory.push_back(m);
+  }
+  // Relationships from the town spec: they start out knowing each other.
+  for (auto& rel : opts_.spec.relationships) {
+    int a = -1, b = -1;
+    for (size_t i = 0; i < agents_.size(); ++i) {
+      if (agents_[i].p.name == rel.a) a = static_cast<int>(i);
+      if (agents_[i].p.name == rel.b) b = static_cast<int>(i);
+    }
+    if (a < 0 || b < 0 || a == b) continue;
+    agents_[a].familiarity[b] = agents_[b].familiarity[a] = rel.closeness;
+    agents_[a].relationNote[b] = rel.note;
+    if (!rel.note.empty()) {
+      MemoryNode m;
+      m.type = NodeType::Thought;
+      m.description = agents_[a].p.name + " " + rel.note + " " + agents_[b].p.name + ".";
+      m.poignancy = 6;
+      m.person = b;
+      agents_[a].memory.push_back(m);
+    }
   }
   gridW_ = world_.width() / kGridCell + 1;
   gridH_ = world_.height() / kGridCell + 1;
@@ -175,7 +214,8 @@ void Ville::rebuildGrid() {
 void Ville::perceive(int i, std::vector<MemoryNode>& out) {
   Agent& a = agents_[i];
   if (a.asleep) return;
-  int r = opts_.visionRadius;
+  const SocialRules& rules = rulesFor(i);
+  int r = rules.visionRadius;
   int myArena = world_.arenaAt(a.x, a.y);
   // Retention: only a change in what someone (or something) is doing is news.
   auto changed = [&](int key, const std::string& what) {
@@ -191,7 +231,7 @@ void Ville::perceive(int i, std::vector<MemoryNode>& out) {
   for (int cy = cy0; cy <= cy1; ++cy)
     for (int cx = cx0; cx <= cx1; ++cx)
       for (int j : grid_[cy * gridW_ + cx]) {
-        if (j == i || seen >= opts_.attention) continue;
+        if (j == i || seen >= rules.attention) continue;
         const Agent& b = agents_[j];
         if (std::abs(b.x - a.x) > r || std::abs(b.y - a.y) > r) continue;
         if (world_.arenaAt(b.x, b.y) != myArena) continue;
@@ -212,7 +252,7 @@ void Ville::perceive(int i, std::vector<MemoryNode>& out) {
     for (int o : world_.arenas[myArena].objects) {
       const GameObject& obj = world_.objects[o];
       if (obj.state == "idle" || std::abs(obj.x - a.x) > r || std::abs(obj.y - a.y) > r) continue;
-      if (seen >= opts_.attention || !changed(-1 - o, obj.state)) continue;
+      if (seen >= rules.attention || !changed(-1 - o, obj.state)) continue;
       ++seen;
       std::string desc = obj.name + " is " + obj.state;
       MemoryNode m;
@@ -502,7 +542,7 @@ bool Ville::step() {
   // 7. Reflect once enough has happened (parallel -- LLM-heavy when live).
   std::vector<int> reflecting;
   for (int i = 0; i < n; ++i)
-    if (agents_[i].importanceSinceReflect >= opts_.reflectThreshold && !agents_[i].asleep) reflecting.push_back(i);
+    if (agents_[i].importanceSinceReflect >= rulesFor(i).reflectThreshold && !agents_[i].asleep) reflecting.push_back(i);
   if (!reflecting.empty()) {
     auto fn = [&](size_t k) { reflect(reflecting[k]); };
     if (opts_.parallel) sl::ThreadPool::shared().parallelFor(reflecting.size(), fn, 1);

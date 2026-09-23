@@ -90,7 +90,7 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 
 }  // namespace
 
-// sl_run --ville [population] [days] [--serial] [--log]: The Ville, headless.
+// sl_run --ville [population] [days] [--serial] [--log] [--town FILE]: The Ville, headless.
 int runVille(int argc, char** argv) {
   ville::VilleOptions o;
   o.population = argc > 2 ? std::atoi(argv[2]) : 25;
@@ -99,6 +99,7 @@ int runVille(int argc, char** argv) {
   for (int i = 2; i < argc; ++i) {
     if (std::string(argv[i]) == "--serial") o.parallel = false;
     if (std::string(argv[i]) == "--log") log = true;
+    if (std::string(argv[i]) == "--town" && i + 1 < argc) o.spec = ville::TownSpec::load(argv[++i]);
   }
   std::vector<std::shared_ptr<sl::Provider>> roster = {std::make_shared<sl::MockProvider>(1)};
   long long counts[6] = {};

@@ -27,6 +27,7 @@ add_library(sl_engine STATIC
   src/ville/personas.cpp
   src/ville/cognition.cpp
   src/ville/sim.cpp
+  src/ville/spec.cpp
 )
 target_include_directories(sl_engine PUBLIC src third_party)
 target_link_libraries(sl_engine PUBLIC winhttp crypt32)
@@ -54,6 +55,7 @@ add_executable(SocialSandbox WIN32
   src/app/panels_console.cpp
   src/app/panels_project.cpp
   src/app/panels_settings.cpp
+  src/app/panels_town_edit.cpp
   ${IMGUI_DIR}/imgui.cpp
   ${IMGUI_DIR}/imgui_draw.cpp
   ${IMGUI_DIR}/imgui_tables.cpp
