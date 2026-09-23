@@ -7,6 +7,53 @@ Electron version in `sandbox/`.
 
 <img src="resources/icon.png" width="64" alt="SocialSandbox logo">
 
+## The Ville: Generative Agents at scale
+
+The default scenario is a native simulation of Smallville from *Generative
+Agents: Interactive Simulacra of Human Behavior* (Park et al. 2023). It
+starts on Monday, February 13, 2023 with the paper's 25 residents (Isabella
+Rodriguez planning her Valentine's Day party at Hobbs Cafe, Sam Moore running
+for mayor, Klaus Mueller writing about gentrification, and so on). The
+personas are paraphrased from the paper's released simulation. Every 10
+game-seconds, each resident runs the paper's loop:
+
+| Mechanism | What happens |
+|---|---|
+| World | A tile town, organized as buildings > rooms > objects, with walls, doors, and roads. Residents walk A* paths one tile per step, and objects change state while they're used. |
+| Perceive | Other residents and objects in use, within a 4-tile radius in the same room, become memory-stream observations. They're recorded only when they change, 3 per step at most. |
+| Retrieve | Recency + importance + relevance. |
+| Plan | On waking: a broad daily plan, then an hourly schedule. Each hour breaks into 5-15 minute tasks, each with a `world:building:room:object` address and an emoji. |
+| React / converse | Seeing someone can start a conversation grounded in memory. News spreads through these conversations, so the party invite travels from person to person and guests show up at Hobbs Cafe on the 14th. |
+| Reflect | Once summed importance passes 150, insights are written back to memory. |
+
+The Scenarios panel also has generated towns of 250, 1,000, and 5,000
+residents, and `sl_run --ville N DAYS` runs a town headless.
+
+**Two kinds of cognition.** With a real model enabled in Model Settings,
+residents think through the paper's prompts (daily schedule, task
+decomposition, dialogue, reflection) with their own model, and fall back to
+the offline model when a reply can't be parsed. With no model, an offline
+**persona model** stands in for the LLM. It builds schedules, tasks,
+conversations, and reflections from each resident's archetype, lifestyle,
+current project, and retrieved memories. That's fast enough for thousands of
+residents, but it follows templates, so its conversations are formulaic. It
+reproduces the paper's structure (routines, information diffusion,
+relationship memory), not its open-ended behavior.
+
+Measured with the persona model on this 8-core ARM64 laptop:
+
+| Residents | Game time | Wall time | Agent-hours / s |
+|---|---|---|---|
+| 25 | 2 days | 0.17 s | 6,255 |
+| 250 | 1 day | 2.5 s | 1,815 |
+| 1,000 | 1 day | 24.5 s | 733 |
+
+In the 25-resident run, all 25 hear about the party by word of mouth and 17
+plan to attend. The paper reports lower diffusion with real LLM agents. The
+persona model's chattiness and acceptance rates are tuning, not measurement.
+Below about 600 residents a step is too small for the worker pool to pay off,
+so small towns run serially.
+
 ## Build
 
 Needs Visual Studio 2022 with the C++ workload (CMake and Ninja ship with it).
