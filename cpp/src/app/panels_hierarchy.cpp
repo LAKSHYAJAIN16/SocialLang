@@ -97,7 +97,11 @@ void drawHierarchy(EditorState& ed) {
         if (matches(info.locations[i].id, search)) byType[info.locations[i].type].push_back(static_cast<int>(i));
       for (auto& [type, ids] : byType) {
         ImGuiTreeNodeFlags f = base | (search.empty() ? 0 : ImGuiTreeNodeFlags_DefaultOpen);
-        if (ImGui::TreeNodeEx(type.c_str(), f, "%s  (%zu)", type.c_str(), ids.size())) {
+        int sectorIdx = info.isVille && info.villeWorld && !ids.empty() ? info.villeWorld->arenas[ids[0]].sector : -1;
+        if (sectorIdx >= 0 && ed.sel.kind == SelKind::Building && ed.sel.index == sectorIdx) f |= ImGuiTreeNodeFlags_Selected;
+        bool nodeOpen = ImGui::TreeNodeEx(type.c_str(), f, "%s  (%zu)", type.c_str(), ids.size());
+        if (sectorIdx >= 0 && ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) ed.sel = {SelKind::Building, sectorIdx};
+        if (nodeOpen) {
           ImGuiListClipper clip;
           clip.Begin(static_cast<int>(ids.size()));
           while (clip.Step())

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "app/sim_controller.h"
+#include "ville/spec.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -27,7 +28,7 @@ struct Asset {
   bool dirty() const { return text != saved; }
 };
 
-enum class SelKind { None, Sim, Agent, Location, Asset };
+enum class SelKind { None, Sim, Agent, Location, Asset, Building };
 
 struct Selection {
   SelKind kind = SelKind::None;
@@ -69,6 +70,12 @@ struct EditorState {
   int activeAsset = -1;  // loaded into the World view
   int villePopulation = 0;  // > 0 while The Ville is loaded
   std::unordered_map<std::string, int> nameIndex;  // resident name -> index (The Ville)
+  ville::TownSpec townSpec;  // the town's customizations (buildings, residents, relationships, rules)
+  std::string townSpecPath;  // games/the_ville.town.json
+  bool showRules = true;
+  int rulesScope = 0;          // 0 whole town, 1 a group, 2 one resident
+  std::string rulesGroup, rulesResident;
+  int buildingScope = 0;       // 0 this building, 1 every building of its type, 2 every building
   uint32_t seed = 1;
 
   // Latest snapshot from the worker, refreshed once per frame.
@@ -115,6 +122,7 @@ struct EditorState {
     int steps = 0;
     bool toEnd = false, light = false, settings = false;
     int ville = 0;  // --ville N
+    std::string building;  // --building NAME: open it in the Inspector
     uint32_t seed = 1;
   } launch;
 
@@ -153,6 +161,12 @@ void drawConsole(EditorState& ed);
 void drawProject(EditorState& ed);
 void drawScripts(EditorState& ed);
 void drawModelSettings(EditorState& ed);
+void drawRules(EditorState& ed);
+
+// Town customization (panels_town_edit.cpp)
+void inspectBuilding(EditorState& ed, int sector);
+void editResident(EditorState& ed, int agent);
+void applyTownEdits(EditorState& ed, const char* what);
 
 // Small shared widgets (editor.cpp)
 void sectionHeader(EditorState& ed, const char* label);

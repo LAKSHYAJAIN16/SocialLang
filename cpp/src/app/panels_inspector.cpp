@@ -195,6 +195,7 @@ void inspectResident(EditorState& ed, int i) {
     for (auto& k : d->knows) ImGui::BulletText("%s", k.c_str());
     endComponent();
   }
+  editResident(ed, i);
 }
 
 void inspectRoom(EditorState& ed, int arena) {
@@ -202,6 +203,8 @@ void inspectRoom(EditorState& ed, int arena) {
   const ville::World& w = *ed.info.villeWorld;
   const ville::Arena& ar = w.arenas[arena];
   objectHeader(ed, locationIconFn, arena, ar.name.c_str(), w.sectors[ar.sector].name.c_str());
+  if (ImGui::Button(("Edit " + w.sectors[ar.sector].name).c_str(), ImVec2(-1, 0))) ed.sel = {SelKind::Building, ar.sector};
+  ImGui::SetItemTooltip("Change how this building looks: type, size, colors, rooms, furniture");
   if (component(ed, "Objects")) {
     for (int o : ar.objects) {
       bool busy = ed.info.objectBusy && o < (int)ed.info.objectBusy->size() && (*ed.info.objectBusy)[o];
@@ -416,6 +419,7 @@ void drawInspector(EditorState& ed) {
     inspectLocation(ed, s.index);
   else if (s.kind == SelKind::Sim && ed.info.status != SimStatus::Empty) inspectSim(ed);
   else if (s.kind == SelKind::Asset && s.index >= 0 && s.index < (int)ed.assets.size()) inspectAsset(ed, s.index);
+  else if (s.kind == SelKind::Building) inspectBuilding(ed, s.index);
   else {
     ImGui::Spacing();
     ImGui::TextDisabled("Nothing selected.");

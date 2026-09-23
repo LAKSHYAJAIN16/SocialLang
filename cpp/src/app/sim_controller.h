@@ -87,7 +87,9 @@ class SimController {
   // status becomes CompileError and the message is in info().error.
   void load(const std::string& source, uint32_t seed, const sl::Settings& settings);
   // The Ville (Generative Agents' Smallville) with `population` residents.
-  void loadVille(int population, uint32_t seed, const sl::Settings& settings);
+  void loadVille(int population, uint32_t seed, const sl::Settings& settings, const ville::TownSpec& spec = {});
+  // Social rules take effect from the next step, mid-run.
+  void setRules(const ville::TownSpec& spec);  // town, group, and resident rules
   void reset();  // same source, seed, and roster
   void clear();
 
@@ -117,6 +119,9 @@ class SimController {
   std::shared_ptr<sl::Interpreter> interp_;
   std::shared_ptr<ville::Ville> ville_;
   int villePopulation_ = 0;
+  ville::TownSpec villeSpec_;
+  bool rulesPending_ = false;
+  ville::TownSpec pendingRules_;
   double lastDetailCapture_ = 0;
   void captureVille(const ville::Ville& v, bool withDetails);
   std::vector<sl::RosterEntry> roster_;

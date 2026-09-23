@@ -124,11 +124,25 @@ void SimController::reset() {
     s = settings_;
     pop = villePopulation_;
   }
-  if (pop > 0) loadVille(pop, seed, s);
+  ville::TownSpec spec;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    spec = villeSpec_;
+  }
+  if (pop > 0) loadVille(pop, seed, s, spec);
   else if (!src.empty()) load(src, seed, s);
 }
 
-void SimController::loadVille(int population, uint32_t seed, const Settings& settings) {
+void SimController::setRules(const ville::TownSpec& spec) {
+  std::lock_guard<std::mutex> lock(mu_);
+  villeSpec_.rules = spec.rules;
+  villeSpec_.groupRules = spec.groupRules;
+  villeSpec_.residentRules = spec.residentRules;
+  pendingRules_ = villeSpec_;
+  rulesPending_ = true;
+}
+
+void SimController::loadVille(int population, uint32_t seed, const Settings& settings, const ville::TownSpec& spec) {
   clear();
   std::vector<std::shared_ptr<Provider>> roster;
   std::vector<std::string> labels;
@@ -149,11 +163,14 @@ void SimController::loadVille(int population, uint32_t seed, const Settings& set
     settings_ = settings;
     source_.clear();
     villePopulation_ = population;
+    villeSpec_ = spec;
+    rulesPending_ = false;
   }
   ville::VilleOptions o;
   o.population = population;
   o.seed = seed;
   o.maxConcurrency = settings.maxConcurrency;
+  o.spec = spec;
   auto v = std::make_shared<ville::Ville>(o, roster, [this, gen](const ville::VilleEvent& e) {
     std::lock_guard<std::mutex> lock(mu_);
     if (gen != generation_ || !ville_) return;
@@ -389,6 +406,10 @@ void SimController::worker() {
         continue;
       }
       unsigned gen = generation_;
+      if (rulesPending_) {  // between steps: safe to swap the rules
+        v->setRules(pendingRules_);
+        rulesPending_ = false;
+      }
       info_.status = SimStatus::Running;
       info_.busy = true;
       lock.unlock();

@@ -222,7 +222,7 @@ void loadVille(EditorState& ed, int population) {
   ed.villePopulation = population;
   ed.activeAsset = -1;
   ed.playMode = false;
-  ed.sim.loadVille(population, ed.seed, ed.settings);
+  ed.sim.loadVille(population, ed.seed, ed.settings, ed.townSpec);
   ed.info = ed.sim.info();
   ed.nameIndex.clear();
   for (size_t i = 0; i < ed.info.agents.size(); ++i) ed.nameIndex[ed.info.agents[i].seat] = static_cast<int>(i);
@@ -281,6 +281,8 @@ void initEditor(EditorState& ed) {
   ed.settings = sl::Settings::load();
   ed.settingsDraft = ed.settings;
   ed.assetsDir = resolveAssetsDir();
+  ed.townSpecPath = (ed.assetsDir / "the_ville.town.json").string();
+  ed.townSpec = ville::TownSpec::load(ed.townSpecPath);
   ed.dark = !ed.launch.light;
   ed.seed = ed.launch.seed;
   applyTheme(ed);
@@ -435,6 +437,7 @@ void parseLaunchArgs(EditorState& ed, int argc, wchar_t** argv) {
     else if (a == "--light") ed.launch.light = true;
     else if (a == "--settings") ed.launch.settings = true;
     else if (a == "--ville") ed.launch.ville = std::atoi(next().c_str());
+    else if (a == "--building") ed.launch.building = next();
   }
 }
 
@@ -570,6 +573,7 @@ void drawMenuBar(EditorState& ed) {
     ImGui::MenuItem("Town", nullptr, &ed.showHierarchy);
     ImGui::MenuItem("World", nullptr, &ed.showScene);
     ImGui::MenuItem("Inspector", nullptr, &ed.showInspector);
+    ImGui::MenuItem("Rules", nullptr, &ed.showRules);
     ImGui::MenuItem("Scenarios", nullptr, &ed.showProject);
     ImGui::MenuItem("Activity", nullptr, &ed.showConsole);
     ImGui::Separator();
@@ -779,7 +783,8 @@ void buildDefaultLayout(EditorState& ed, ImGuiID dockId) {
   left = ImGui::DockBuilderSplitNode(main, ImGuiDir_Left, 0.22f, nullptr, &main);
   ImGui::DockBuilderDockWindow("Town", left);
   ImGui::DockBuilderDockWindow("World", main);
-  ImGui::DockBuilderDockWindow("Inspector", right);
+  ImGui::DockBuilderDockWindow("Rules", right);
+  ImGui::DockBuilderDockWindow("Inspector", right);  // docked last: the tab in front
   ImGui::DockBuilderDockWindow("Scenarios", bottom);
   ImGui::DockBuilderDockWindow("Activity", bottom);
   ImGui::DockBuilderFinish(dockId);
@@ -841,6 +846,11 @@ void drawEditor(EditorState& ed) {
     ed.frames.erase(ed.frames.begin(), ed.frames.begin() + static_cast<long long>(drop));
     ed.viewFrame = std::max(0, ed.viewFrame - static_cast<int>(drop));
   }
+  if (!ed.launch.building.empty() && ed.info.villeWorld) {
+    int s = ed.info.villeWorld->findSector(ed.launch.building);
+    if (s >= 0) ed.sel = {SelKind::Building, s};
+    ed.launch.building.clear();
+  }
   if (!ed.launch.select.empty() && !ed.info.agents.empty()) {  // --select, once the run exists
     int a = seatIndex(ed, ed.launch.select);
     if (a >= 0) {
@@ -858,7 +868,7 @@ void drawEditor(EditorState& ed) {
   drawStatusBar(ed);
 
   ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGuiID dockId = ImGui::GetID("SocialSandboxDock.v2");
+  ImGuiID dockId = ImGui::GetID("SocialSandboxDock.v4");
   if (ed.resetLayout || !ImGui::DockBuilderGetNode(dockId)) {
     buildDefaultLayout(ed, dockId);
     ed.resetLayout = false;
@@ -871,6 +881,7 @@ void drawEditor(EditorState& ed) {
   if (ed.showProject) drawProject(ed);
   if (ed.showConsole) drawConsole(ed);
   drawScripts(ed);
+  drawRules(ed);
   drawModelSettings(ed);
   drawAbout(ed);
 }

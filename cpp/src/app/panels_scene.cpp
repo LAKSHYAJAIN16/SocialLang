@@ -150,13 +150,17 @@ int drawVille(EditorState& ed, ImDrawList* dl, const View& v, const Frame& frame
           case ville::Tile::Grass: c = rgb(0x6B8F4E); break;
           case ville::Tile::Road: c = rgb(0x8C8C84); break;
           case ville::Tile::Plaza: c = rgb(0xC8B894); break;
-          case ville::Tile::Wall: c = rgb(0x3A3A44); break;
+          case ville::Tile::Wall: {
+            int s = w.sectorAt(x, y);
+            c = s >= 0 && w.sectors[s].wallColor ? rgb(w.sectors[s].wallColor) : rgb(0x3A3A44);
+            break;
+          }
           case ville::Tile::Door: c = rgb(0x8A5A2B); break;
           case ville::Tile::Water: c = rgb(0x4A86C5); break;
           case ville::Tile::Tree: c = rgb(0x6B8F4E); break;
           default: {
             int s = w.sectorAt(x, y);
-            c = s >= 0 ? floorColor(w.sectors[s].kind) : rgb(0xC0C0C0);
+            c = s < 0 ? rgb(0xC0C0C0) : w.sectors[s].floorColor ? rgb(w.sectors[s].floorColor) : floorColor(w.sectors[s].kind);
           }
         }
         ImVec2 a = T((float)x, (float)y), b = T((float)x + 1, (float)y + 1);
@@ -179,8 +183,9 @@ int drawVille(EditorState& ed, ImDrawList* dl, const View& v, const Frame& frame
     for (int y = 0; y < w.height(); y += 20) dl->AddRectFilled(T(0, (float)y), T((float)w.width(), (float)y + 2), rgb(0x8C8C84));
     for (auto& s : w.sectors) {
       ImVec2 a = T((float)s.rect.x, (float)s.rect.y), b = T((float)(s.rect.x + s.rect.w), (float)(s.rect.y + s.rect.h));
-      dl->AddRectFilled(a, b, floorColor(s.kind));
-      if (s.kind != ville::SectorKind::Park) dl->AddRect(a, b, rgb(0x3A3A44), 0, 0, std::max(1.0f, ts * 0.8f));
+      dl->AddRectFilled(a, b, s.floorColor ? rgb(s.floorColor) : floorColor(s.kind));
+      if (s.kind != ville::SectorKind::Park)
+        dl->AddRect(a, b, s.wallColor ? rgb(s.wallColor) : rgb(0x3A3A44), 0, 0, std::max(1.0f, ts * 0.8f));
     }
   }
 
@@ -224,6 +229,10 @@ int drawVille(EditorState& ed, ImDrawList* dl, const View& v, const Frame& frame
     ImVec2 m = v.toWorld(mouse);
     int mx = (int)std::floor(m.x), my = (int)std::floor(m.y);
     if (mx >= 0 && my >= 0 && mx < w.width() && my < w.height()) hoverRoom = w.arenaAt(mx, my);
+  }
+  if (ed.sel.kind == SelKind::Building && ed.sel.index >= 0 && ed.sel.index < (int)w.sectors.size()) {
+    const ville::Rect& r = w.sectors[ed.sel.index].rect;
+    dl->AddRect(T((float)r.x, (float)r.y), T((float)(r.x + r.w), (float)(r.y + r.h)), ed.pal.select, 0, 0, 3.0f);
   }
   if (ed.sel.kind == SelKind::Location && ed.sel.index >= 0 && ed.sel.index < (int)w.arenas.size()) {
     const ville::Rect& r = w.arenas[ed.sel.index].rect;

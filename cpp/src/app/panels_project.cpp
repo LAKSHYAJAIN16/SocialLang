@@ -24,7 +24,7 @@ void drawProject(EditorState& ed) {
     bool active = ed.villePopulation == pop;
     std::string label = std::to_string(pop) + (pop == 25 ? " residents\nthe paper's cast" : " residents\ngenerated town");
     ImGui::PushStyleColor(ImGuiCol_Button, active ? ImGui::GetStyleColorVec4(ImGuiCol_Header) : ImGui::GetStyleColorVec4(ImGuiCol_Button));
-    if (ImGui::Button(label.c_str(), ImVec2(150, 44))) loadVille(ed, pop);
+    if (ImGui::Button(label.c_str(), ImVec2(150, ImGui::GetTextLineHeight() * 2 + ImGui::GetStyle().FramePadding.y * 2 + 6))) loadVille(ed, pop);
     ImGui::PopStyleColor();
     ImGui::SameLine();
   }
