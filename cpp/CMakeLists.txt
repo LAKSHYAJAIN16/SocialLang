@@ -57,6 +57,8 @@ add_executable(SocialSandbox WIN32
   src/app/panels_project.cpp
   src/app/panels_settings.cpp
   src/app/panels_town_edit.cpp
+  src/app/sl_language.cpp
+  third_party/textedit/TextEditor.cpp
   ${IMGUI_DIR}/imgui.cpp
   ${IMGUI_DIR}/imgui_draw.cpp
   ${IMGUI_DIR}/imgui_tables.cpp
@@ -67,7 +69,7 @@ add_executable(SocialSandbox WIN32
   ${IMGUI_DIR}/misc/cpp/imgui_stdlib.cpp
   resources/app.rc
 )
-target_include_directories(SocialSandbox PRIVATE src ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_include_directories(SocialSandbox PRIVATE src third_party ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 # 32-bit ImWchar: emoji (the residents' activity bubbles) live above U+FFFF.
 target_compile_definitions(SocialSandbox PRIVATE IMGUI_USE_WCHAR32)
 target_link_libraries(SocialSandbox PRIVATE sl_engine d3d11 dxgi d3dcompiler dwmapi shell32 ole32 comdlg32)

@@ -195,6 +195,7 @@ void refreshAssets(EditorState& ed) {
         if (old.path == a.path) {
           if (old.dirty()) a.text = old.text;
           a.scriptOpen = old.scriptOpen;
+          a.view = old.view;
         }
       }
       next.push_back(std::move(a));
@@ -356,6 +357,8 @@ void initEditor(EditorState& ed) {
     if (ed.assets[i].name == want) first = static_cast<int>(i);
   if (first < 0 && want.empty() && ed.assets.size() && ed.assets[0].kind == "environment") first = 0;
   if (first >= 0) loadAsset(ed, first);
+  for (auto& a : ed.assets)
+    if (a.name == ed.launch.edit) a.scriptOpen = a.focusScript = true;
   if (ed.launch.toEnd) {
     ed.playMode = true;
     ed.sim.runToEnd();
@@ -500,6 +503,7 @@ void parseLaunchArgs(EditorState& ed, int argc, wchar_t** argv) {
     else if (a == "--light") ed.launch.light = true;
     else if (a == "--settings") ed.launch.settings = true;
     else if (a == "--town") ed.launch.town = next();
+    else if (a == "--edit") ed.launch.edit = next();
     else if (a == "--building") ed.launch.building = next();
   }
 }

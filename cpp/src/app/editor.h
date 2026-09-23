@@ -18,6 +18,8 @@
 
 namespace app {
 
+struct ScriptView;  // the script tab's code editor (panels_project.cpp)
+
 struct Asset {
   std::string name;  // file name, e.g. "smallville.sl"
   std::filesystem::path path;
@@ -27,6 +29,7 @@ struct Asset {
   std::string detail; // environment files: "25 residents, oakhill.behavior.sl"
   bool scriptOpen = false;
   bool focusScript = false;
+  std::shared_ptr<ScriptView> view;
   bool dirty() const { return text != saved; }
 };
 
@@ -123,6 +126,7 @@ struct EditorState {
     int steps = 0;
     bool toEnd = false, light = false, settings = false;
     std::string town;  // --town FILE.env.sl
+    std::string edit;  // --edit FILE.sl: open it in a script tab
     std::string building;  // --building NAME: open it in the Inspector
     uint32_t seed = 1;
   } launch;

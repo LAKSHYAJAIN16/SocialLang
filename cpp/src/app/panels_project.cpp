@@ -6,8 +6,140 @@
 #include <algorithm>
 
 #include "app/editor.h"
+#include "app/sl_language.h"
 
 namespace app {
+
+// A script tab's code editor: highlighting, autocomplete, and live checks
+// (syntax errors and likely typos, with one-click fixes).
+struct ScriptView {
+  TextEditor editor;
+  std::string kind;
+  std::string synced;       // the text the editor holds (mirrors Asset::text)
+  size_t undoIndex = 0;
+  bool dark = true;
+  TextEditor::AutoCompleteConfig autocomplete;
+  // Diagnostics, re-run a moment after typing stops.
+  std::string checked;
+  double editedAt = 0;
+  std::string error;
+  int errorLine = 0;
+  std::vector<SlTypo> typos;
+};
+
+namespace {
+
+std::shared_ptr<ScriptView> makeView(EditorState& ed, const Asset& a) {
+  auto v = std::make_shared<ScriptView>();
+  v->kind = a.kind;
+  v->dark = ed.dark;
+  v->editor.SetLanguage(slLanguage());
+  v->editor.SetPalette(slPalette(ed.dark));
+  v->editor.SetTabSize(2);
+  v->editor.SetShowWhitespacesEnabled(false);
+  v->editor.SetText(a.text);
+  v->synced = a.text;
+  v->undoIndex = v->editor.GetUndoIndex();
+  ScriptView* raw = v.get();
+  v->autocomplete.triggerDelay = std::chrono::milliseconds(120);
+  v->autocomplete.callback = [raw](TextEditor::AutoCompleteState& st) {
+    st.suggestions = slSuggestions(raw->kind, raw->synced, st.searchTerm);
+  };
+  v->editor.SetAutoCompleteConfig(&v->autocomplete);
+  // Right-click a flagged word to correct it.
+  v->editor.SetTextContextMenuCallback([raw](TextEditor::PopupData& d) {
+    bool any = false;
+    for (auto& t : raw->typos) {
+      if (t.line != d.pos.line) continue;
+      any = true;
+      std::string item = "Change \"" + t.word + "\" to \"" + t.fix + "\"";
+      if (ImGui::MenuItem(item.c_str()))
+        raw->editor.ReplaceSectionText(TextEditor::DocPos(t.line, t.col), TextEditor::DocPos(t.line, t.col + t.len), t.fix);
+    }
+    if (any) ImGui::Separator();
+    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, raw->editor.CanUndo())) raw->editor.Undo();
+    if (ImGui::MenuItem("Redo", "Ctrl+Y", false, raw->editor.CanRedo())) raw->editor.Redo();
+    ImGui::Separator();
+    if (ImGui::MenuItem("Cut", "Ctrl+X")) raw->editor.Cut();
+    if (ImGui::MenuItem("Copy", "Ctrl+C")) raw->editor.Copy();
+    if (ImGui::MenuItem("Paste", "Ctrl+V")) raw->editor.Paste();
+  });
+  return v;
+}
+
+void runChecks(EditorState& ed, ScriptView& v) {
+  v.checked = v.synced;
+  checkSource(v.synced, v.kind, v.error, v.errorLine);
+  v.typos = findTypos(v.synced, v.kind);
+  v.editor.ClearMarkers();
+  if (!v.error.empty())
+    v.editor.AddMarker(v.errorLine > 0 ? v.errorLine - 1 : 0, ed.pal.error, IM_COL32(200, 60, 60, 60), v.error, v.error);
+  for (auto& t : v.typos) {
+    std::string tip = "\"" + t.word + "\": did you mean \"" + t.fix + "\"? Right-click to fix.";
+    v.editor.AddMarker(t.line, ed.pal.warning, IM_COL32(220, 170, 40, 40), tip, tip);
+  }
+}
+
+// Draws the editor for one asset, keeping Asset::text in sync both ways.
+void drawCode(EditorState& ed, Asset& a) {
+  if (!a.view || a.view->kind != a.kind) a.view = makeView(ed, a);
+  ScriptView& v = *a.view;
+  if (a.text != v.synced) {  // changed outside the editor (revert, file rewritten by a panel)
+    v.editor.SetText(a.text);
+    v.synced = a.text;
+    v.undoIndex = v.editor.GetUndoIndex();
+    v.checked.clear();
+  }
+  if (v.dark != ed.dark) {
+    v.dark = ed.dark;
+    v.editor.SetPalette(slPalette(ed.dark));
+  }
+  double now = ImGui::GetTime();
+  if (v.checked != v.synced && now - v.editedAt > 0.35) runChecks(ed, v);
+
+  // Status line: errors and typos, with the fix.
+  if (!v.error.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ed.pal.error));
+    ImGui::TextWrapped("%s", v.error.c_str());
+    ImGui::PopStyleColor();
+    if (v.errorLine > 0) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Go to line")) {
+        v.editor.SetCursor(TextEditor::DocPos(v.errorLine - 1, 0));
+        v.editor.ScrollToLine(v.errorLine - 1);
+      }
+    }
+  }
+  if (!v.typos.empty()) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ed.pal.warning));
+    const SlTypo& t = v.typos.front();
+    if (v.typos.size() == 1)
+      ImGui::Text("Line %zu: \"%s\" -- did you mean \"%s\"?", t.line + 1, t.word.c_str(), t.fix.c_str());
+    else
+      ImGui::Text("%zu likely typos, e.g. line %zu: \"%s\" -> \"%s\"", v.typos.size(), t.line + 1, t.word.c_str(), t.fix.c_str());
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    if (ImGui::SmallButton(v.typos.size() == 1 ? "Fix" : "Fix all")) {
+      // Right to left so earlier columns stay valid.
+      auto typos = v.typos;
+      std::sort(typos.begin(), typos.end(), [](auto& x, auto& y) { return x.line != y.line ? x.line > y.line : x.col > y.col; });
+      for (auto& fix : typos)
+        v.editor.ReplaceSectionText(TextEditor::DocPos(fix.line, fix.col), TextEditor::DocPos(fix.line, fix.col + fix.len), fix.fix);
+    }
+  }
+
+  ImGui::PushFont(ed.fonts.mono, 0.0f);
+  v.editor.Render("##code", ImGui::GetContentRegionAvail());
+  ImGui::PopFont();
+  if (v.editor.GetUndoIndex() != v.undoIndex) {
+    v.undoIndex = v.editor.GetUndoIndex();
+    v.synced = v.editor.GetText();
+    a.text = v.synced;
+    v.editedAt = now;
+  }
+}
+
+}  // namespace
 
 void drawProject(EditorState& ed) {
   if (!beginPanel("Scenarios", &ed.showProject)) {
@@ -122,7 +254,8 @@ void drawScripts(EditorState& ed) {
     if (ed.sceneDockId) ImGui::SetNextWindowDockID(ed.sceneDockId, ImGuiCond_FirstUseEver);
     if (a.focusScript) {
       ImGui::SetNextWindowFocus();
-      a.focusScript = false;
+      // The dock space is built on the first frames; keep asking until it is.
+      if (ImGui::GetFrameCount() > 3) a.focusScript = false;
     }
     ImGuiWindowFlags flags = a.dirty() ? ImGuiWindowFlags_UnsavedDocument : 0;
     bool open = true;
@@ -142,15 +275,9 @@ void drawScripts(EditorState& ed) {
       ImGui::SetItemTooltip("Save, then parse and load this script at round 0");
       ImGui::SameLine();
       ImGui::TextDisabled("%s", a.dirty() ? "unsaved  |  Ctrl+S to save" : "saved");
-      if (isActive && ed.info.status == SimStatus::CompileError) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::ColorConvertU32ToFloat4(ed.pal.error));
-        ImGui::TextWrapped("%s", ed.info.error.c_str());
-        ImGui::PopStyleColor();
-      }
-      ImGui::PushFont(ed.fonts.mono, 0.0f);
-      ImGui::InputTextMultiline("##src", &a.text, ImGui::GetContentRegionAvail(),
-                                ImGuiInputTextFlags_AllowTabInput);
-      ImGui::PopFont();
+      ImGui::SameLine();
+      ImGui::TextDisabled("|  %s file  |  Ctrl+Space: suggestions", a.kind.c_str());
+      drawCode(ed, a);
     }
     ImGui::End();
     if (!open) a.scriptOpen = false;
