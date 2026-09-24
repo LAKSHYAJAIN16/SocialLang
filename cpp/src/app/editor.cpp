@@ -19,16 +19,16 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// A new town: an environment and a behavior file, both starting from the
-// smallville library. NAME is replaced with the town's name.
-const char* kNewEnvTemplate = R"(// NAME: Smallville's defaults, plus whatever you add below.
+// A new town: a folder, games/NAME/, holding an environment and a behavior
+// file that both start from the smallville library. NAME is the town's name.
+const char* kNewEnvTemplate = R"(// NAME: Smallville's defaults, plus whatever you add below. How its
+// residents behave lives next to this file, in NAME.behavior.sl.
 //   building "Hobbs Cafe" { floor: "#E8C07A" }   changes one building
 //   resident "Ava Novak" { ... }                  adds a resident
 //   remove building "Johnson Park"                drops one
 import smallville
 
 environment NAME {
-  behavior: "NAME.behavior.sl"
 }
 )";
 
@@ -164,16 +164,22 @@ void notify(EditorState& ed, const std::string& msg) {
 void refreshAssets(EditorState& ed) {
   std::vector<Asset> next;
   std::error_code ec;
-  // The folder's towns and behaviors, then the libraries they import (lib/).
-  for (bool lib : {false, true}) {
-    fs::path dir = lib ? ed.assetsDir / "lib" : ed.assetsDir;
-    if (!fs::exists(dir, ec)) continue;
+  // Each town is a folder (games/NAME/) with its environment and behavior
+  // files; lib/ holds the libraries they import. Loose files in games/ still
+  // show up so nothing disappears.
+  std::vector<std::pair<fs::path, std::string>> dirs = {{ed.assetsDir, ""}};
+  if (fs::exists(ed.assetsDir, ec))
+    for (auto& entry : fs::directory_iterator(ed.assetsDir, ec))
+      if (entry.is_directory(ec)) dirs.push_back({entry.path(), entry.path().filename().string()});
+  for (auto& [dir, town] : dirs) {
+    bool lib = town == "lib";
     for (auto& entry : fs::directory_iterator(dir, ec)) {
       if (entry.path().extension() != ".sl") continue;
       Asset a;
-      a.name = (lib ? "lib/" : "") + entry.path().filename().string();
+      a.name = entry.path().filename().string();
       a.path = entry.path();
       a.library = lib;
+      a.town = town;
       a.saved = readFile(a.path);
       a.text = a.saved;
       std::string k = ville::slFileKind(a.saved);
@@ -183,7 +189,9 @@ void refreshAssets(EditorState& ed) {
         try {
           auto env = ville::parseEnvironment(a.saved, dir.string());
           size_t n = env.residents.size() + static_cast<size_t>(std::max(0, env.generate.residents));
-          a.detail = std::to_string(n) + " residents, " + (env.behavior.empty() ? "no behavior file" : env.behavior);
+          std::string beh = env.behavior.empty() ? fs::path(ville::townBehaviorPath(a.path.string())).filename().string()
+                                                 : env.behavior;
+          a.detail = std::to_string(n) + " residents, " + (beh.empty() ? "no behavior file" : beh);
           if (!env.imports.empty()) a.detail += ", imports " + env.imports[0];
         } catch (const std::exception& e) {
           a.detail = e.what();
@@ -200,14 +208,18 @@ void refreshAssets(EditorState& ed) {
       next.push_back(std::move(a));
     }
   }
-  // Towns lead (smallville first), then behaviors, then the library.
+  // Town folders (smallville first), then loose files, then the library;
+  // inside a folder the environment file comes before the behavior file.
   auto rank = [](const Asset& a) {
     if (a.library) return 3;
-    if (a.name == "smallville.env.sl") return 0;
-    return a.kind == "environment" ? 1 : 2;
+    if (a.town.empty()) return 2;
+    return a.town == "smallville" ? 0 : 1;
   };
   std::sort(next.begin(), next.end(), [&](const Asset& x, const Asset& y) {
-    return rank(x) != rank(y) ? rank(x) < rank(y) : x.name < y.name;
+    if (rank(x) != rank(y)) return rank(x) < rank(y);
+    if (x.town != y.town) return x.town < y.town;
+    if (x.kind != y.kind) return x.kind == "environment";
+    return x.name < y.name;
   });
   auto pathOf = [&](int i) { return i >= 0 && i < (int)ed.assets.size() ? ed.assets[i].path.string() : ""; };
   std::string activePath = pathOf(ed.activeAsset), townPath = pathOf(ed.townAsset);
@@ -226,7 +238,14 @@ void loadAsset(EditorState& ed, int index) {
     loadTown(ed, index);
     return;
   }
-  if (a.kind == "behavior") {  // run the first town that uses these behaviors
+  if (a.kind == "behavior") {  // run its town: the environment file in the same folder
+    if (!a.library && !a.town.empty()) {
+      int env = townEnvAsset(ed, a.town);
+      if (env >= 0) {
+        loadTown(ed, env);
+        return;
+      }
+    }
     for (size_t i = 0; i < ed.assets.size(); ++i) {
       if (ed.assets[i].kind != "environment") continue;
       try {
@@ -331,13 +350,15 @@ void newScript(EditorState& ed) {
   std::string name;
   for (int i = 1;; ++i) {
     name = i == 1 ? "NewTown" : "NewTown" + std::to_string(i);
-    if (!fs::exists(ed.assetsDir / (name + ".env.sl"), ec) && !fs::exists(ed.assetsDir / (name + ".behavior.sl"), ec)) break;
+    if (!fs::exists(ed.assetsDir / name, ec)) break;
   }
+  fs::path folder = ed.assetsDir / name;
+  fs::create_directories(folder, ec);
   auto fill = [&](std::string t) {
     for (size_t at; (at = t.find("NAME")) != std::string::npos;) t.replace(at, 4, name);
     return t;
   };
-  fs::path env = ed.assetsDir / (name + ".env.sl"), beh = ed.assetsDir / (name + ".behavior.sl");
+  fs::path env = folder / (name + ".env.sl"), beh = folder / (name + ".behavior.sl");
   std::ofstream(env, std::ios::binary) << fill(kNewEnvTemplate);
   std::ofstream(beh, std::ios::binary) << fill(kNewBehaviorTemplate);
   refreshAssets(ed);
@@ -348,7 +369,8 @@ void newScript(EditorState& ed) {
       ed.sel = {SelKind::Asset, static_cast<int>(i)};
     }
   }
-  notify(ed, "Created " + name + ".env.sl and " + name + ".behavior.sl");
+  ed.projectFolder = name;  // open the new town's folder in Scenarios
+  notify(ed, "Created the town " + name + ": " + name + "/" + name + ".env.sl and " + name + ".behavior.sl");
 }
 
 void initEditor(EditorState& ed) {
@@ -364,6 +386,7 @@ void initEditor(EditorState& ed) {
   std::string want = !ed.launch.town.empty() ? ed.launch.town : ed.launch.game;
   for (size_t i = 0; i < ed.assets.size(); ++i)
     if (ed.assets[i].name == want) first = static_cast<int>(i);
+  if (first < 0 && !want.empty()) first = townEnvAsset(ed, fs::path(want).filename().string());
   if (first < 0 && want.empty() && ed.assets.size() && ed.assets[0].kind == "environment") first = 0;
   if (first >= 0) loadAsset(ed, first);
   for (auto& a : ed.assets)
@@ -587,6 +610,27 @@ void locationIcon(EditorState& ed, float size) {
                                       1.5f);
 }
 
+int townEnvAsset(const EditorState& ed, const std::string& town) {
+  for (size_t i = 0; i < ed.assets.size(); ++i)
+    if (ed.assets[i].town == town && !ed.assets[i].library && ed.assets[i].kind == "environment") return static_cast<int>(i);
+  return -1;
+}
+
+// A folder tile for the Scenarios panel (a town, or the library).
+void folderIcon(EditorState& ed, ImVec2 p, float s, bool active) {
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  float w = s * 0.86f, h = s * 0.64f;
+  ImVec2 a(p.x + (s - w) * 0.5f, p.y + (s - h) * 0.5f + s * 0.04f), b(a.x + w, a.y + h);
+  ImU32 back = active ? ed.pal.accent : IM_COL32(196, 160, 72, 255);
+  ImU32 front = active ? ImGui::GetColorU32(ImLerp(ImGui::ColorConvertU32ToFloat4(ed.pal.accent), ImVec4(1, 1, 1, 1), 0.25f))
+                       : IM_COL32(226, 190, 96, 255);
+  float r = s * 0.05f;
+  // tab, then the folder body in front of it
+  dl->AddRectFilled(ImVec2(a.x, a.y - s * 0.08f), ImVec2(a.x + w * 0.42f, a.y + s * 0.06f), back, r);
+  dl->AddRectFilled(a, b, back, r);
+  dl->AddRectFilled(ImVec2(a.x, a.y + h * 0.18f), b, front, r);
+}
+
 void scriptIcon(EditorState& ed, ImVec2 p, float s, bool active) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   float w = s * 0.72f, fold = s * 0.2f;
@@ -691,9 +735,12 @@ void drawToolbar(EditorState& ed) {
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 1);
     if (ImGui::BeginCombo("##game", current.c_str())) {
       ImGui::TextDisabled("Towns");
-      for (size_t i = 0; i < ed.assets.size(); ++i)
-        if (ed.assets[i].kind == "environment" && ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.townAsset))
-          loadAsset(ed, (int)i);
+      for (size_t i = 0; i < ed.assets.size(); ++i) {
+        const Asset& a = ed.assets[i];
+        if (a.kind != "environment" || a.library) continue;  // one entry per town folder
+        std::string label = a.town.empty() ? a.name : a.town;
+        if (ImGui::Selectable(label.c_str(), (int)i == ed.townAsset)) loadAsset(ed, (int)i);
+      }
       ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Scenario loaded into the World view");

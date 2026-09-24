@@ -27,6 +27,7 @@ struct Asset {
   std::string saved;  // last saved / loaded contents
   std::string kind;   // "environment" or "behavior"
   bool library = false;  // in games/lib: imported by other files
+  std::string town;      // the town folder it lives in (games/NAME/); "lib"; "" if loose in games/
   std::string detail; // environment files: "25 residents, oakhill.behavior.sl"
   bool scriptOpen = false;
   bool focusScript = false;
@@ -118,6 +119,7 @@ struct EditorState {
   unsigned sceneDockId = 0;
   int focusedScript = -1;  // asset index of the focused script tab (Ctrl+S target)
   float projectTileSize = 72.0f;
+  std::string projectFolder;  // Scenarios panel: "" the games folder, else a town folder or "lib"
   std::vector<ModelTest> modelTests;
 
   // Command-line launch options (for scripted checks and shortcuts):
@@ -150,6 +152,8 @@ std::string villeClockForStep(const EditorState& ed, long long step);
 bool saveAsset(EditorState& ed, int index);
 void refreshAssets(EditorState& ed);
 void newScript(EditorState& ed);
+// The environment file of a town folder, as an asset index (-1 if none).
+int townEnvAsset(const EditorState& ed, const std::string& town);
 void notify(EditorState& ed, const std::string& msg);
 const Frame* viewedFrame(const EditorState& ed);
 bool teamRevealed(const EditorState& ed, int agent);
@@ -189,5 +193,6 @@ void parseLaunchArgs(EditorState& ed, int argc, wchar_t** argv);
 void agentIcon(EditorState& ed, int agent, float size);
 void locationIcon(EditorState& ed, float size);
 void scriptIcon(EditorState& ed, ImVec2 pos, float size, bool active);
+void folderIcon(EditorState& ed, ImVec2 pos, float size, bool active);
 
 }  // namespace app

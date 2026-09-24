@@ -1,5 +1,6 @@
-// Project panel (the games folder as Unity's Assets grid) and the script
-// editor tabs that dock next to the Scene.
+// Project panel (the games folder as Unity's Project window: one folder per
+// town, holding its environment and behavior files) and the script editor
+// tabs that dock next to the Scene.
 #include <windows.h>
 #include <shellapi.h>
 
@@ -142,106 +143,224 @@ void drawCode(EditorState& ed, Asset& a) {
 
 }  // namespace
 
+namespace {
+
+void showInExplorer(const std::filesystem::path& p) {
+  std::wstring arg = L"/select,\"" + p.wstring() + L"\"";
+  ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+}
+
+// One tile in the grid: an icon over a centered, two-line label. Returns true
+// when it was double-clicked.
+struct Tile {
+  bool clicked = false, doubleClicked = false, hovered = false;
+};
+Tile drawTile(EditorState& ed, const std::string& label, bool selected, bool folder, bool active, float tile, float cellW) {
+  Tile t;
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  float labelH = ImGui::GetTextLineHeight() * 2 + 4;
+  t.clicked = ImGui::InvisibleButton("##tile", ImVec2(cellW - 8, tile + labelH));
+  t.hovered = ImGui::IsItemHovered();
+  t.doubleClicked = t.hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  if (selected || t.hovered)
+    dl->AddRectFilled(p, ImVec2(p.x + cellW - 8, p.y + tile + labelH),
+                      ImGui::GetColorU32(selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered), 3);
+  ImVec2 icon(p.x + (cellW - 8 - tile) * 0.5f, p.y + 2);
+  if (folder) folderIcon(ed, icon, tile - 4, active);
+  else scriptIcon(ed, icon, tile - 4, active);
+  float wrap = cellW - 12;
+  ImVec2 ts = ImGui::CalcTextSize(label.c_str(), nullptr, false, wrap);
+  ImVec2 tp(p.x + (cellW - 8 - ts.x) * 0.5f, p.y + tile + 2);
+  dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), tp,
+              selected ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImGuiCol_Text), label.c_str(), nullptr, wrap);
+  return t;
+}
+
+void shelfTitle(EditorState& ed, const char* title, const char* hint) {
+  ImGui::PushFont(ed.fonts.bold, 0.0f);
+  ImGui::TextUnformatted(title);
+  ImGui::PopFont();
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", hint);
+}
+
+void runTown(EditorState& ed, const std::string& town) {
+  int env = townEnvAsset(ed, town);
+  if (env >= 0) loadTown(ed, env);
+  else notify(ed, town + " has no environment file (" + town + ".env.sl)");
+}
+
+// A file tile: select, double-click to run its town, right-click for the rest.
+void fileTile(EditorState& ed, size_t i, float tile, float cellW) {
+  Asset& a = ed.assets[i];
+  ImGui::PushID(static_cast<int>(i));
+  ImGui::BeginGroup();
+  bool selected = ed.sel.kind == SelKind::Asset && ed.sel.index == (int)i;
+  bool active = (int)i == ed.activeAsset || (int)i == ed.townAsset;
+  Tile t = drawTile(ed, (a.dirty() ? "* " : "") + a.name, selected, false, active, tile, cellW);
+  if (t.clicked) ed.sel = {SelKind::Asset, (int)i};
+  if (t.doubleClicked && !a.library) loadAsset(ed, (int)i);
+  if (t.doubleClicked && a.library) a.scriptOpen = a.focusScript = true;
+  const char* role = a.kind == "environment" ? "Environment: buildings, residents, relationships, events"
+                                             : "Behavior: social rules, routines, activities";
+  if (t.hovered)
+    ImGui::SetTooltip("%s\n%s%s%s\nDouble-click to %s", a.path.string().c_str(), role, a.detail.empty() ? "" : "\n",
+                      a.detail.c_str(), a.library ? "edit it" : "run the town");
+  if (ImGui::BeginPopupContextItem("##ctx")) {
+    if (!a.library && ImGui::MenuItem("Run Town")) loadAsset(ed, (int)i);
+    if (ImGui::MenuItem("Edit Script")) a.scriptOpen = a.focusScript = true;
+    if (ImGui::MenuItem("Save", nullptr, false, a.dirty())) saveAsset(ed, (int)i);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Show in Explorer")) showInExplorer(a.path);
+    ImGui::EndPopup();
+  }
+  ImGui::EndGroup();
+  ImGui::PopID();
+}
+
+}  // namespace
+
 void drawProject(EditorState& ed) {
   if (!beginPanel("Scenarios", &ed.showProject)) {
     ImGui::End();
     return;
   }
+  namespace fs = std::filesystem;
+  // A folder that went away (deleted or renamed outside) drops back to the top.
+  bool folderExists = ed.projectFolder.empty();
+  for (auto& a : ed.assets) folderExists |= a.town == ed.projectFolder;
+  if (!folderExists) ed.projectFolder.clear();
+  bool inLib = ed.projectFolder == "lib";
+  fs::path here = ed.projectFolder.empty() ? ed.assetsDir : ed.assetsDir / ed.projectFolder;
+
+  // Breadcrumb, Unity-style: games > smallville.
   ImGui::PushFont(ed.fonts.bold, 0.0f);
-  ImGui::TextUnformatted("Scenarios");
+  if (ed.projectFolder.empty()) {
+    ImGui::TextUnformatted("games");
+  } else {
+    if (ImGui::SmallButton("games")) ed.projectFolder.clear();
+    ImGui::SetItemTooltip("Back to all towns (Backspace)");
+  }
   ImGui::PopFont();
+  if (!ed.projectFolder.empty()) {
+    ImGui::SameLine(0, 4);
+    ImGui::TextDisabled(">");
+    ImGui::SameLine(0, 4);
+    ImGui::PushFont(ed.fonts.bold, 0.0f);
+    ImGui::TextUnformatted(ed.projectFolder.c_str());
+    ImGui::PopFont();
+    if (!inLib) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Run Town")) runTown(ed, ed.projectFolder);
+      ImGui::SetItemTooltip("Load %s in the World view", ed.projectFolder.c_str());
+    }
+  }
   ImGui::SameLine();
-  ImGui::TextDisabled("%s", ed.assetsDir.string().c_str());
-  ImGui::SameLine();
+  ImGui::TextDisabled("%s", here.string().c_str());
   float right = 90 + 70 + 70 + 110 + 30;
   ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10, ImGui::GetWindowWidth() - right));
   if (ImGui::SmallButton("+ New Town")) newScript(ed);
-  ImGui::SetItemTooltip("An environment and a behavior file that import smallville");
+  ImGui::SetItemTooltip("A new town folder with an environment and a behavior file, both starting from smallville");
   ImGui::SameLine();
   if (ImGui::SmallButton("Refresh")) refreshAssets(ed);
   ImGui::SameLine();
-  if (ImGui::SmallButton("Reveal"))
-    ShellExecuteW(nullptr, L"open", ed.assetsDir.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-  ImGui::SetItemTooltip("Open the folder in Explorer");
+  if (ImGui::SmallButton("Reveal")) ShellExecuteW(nullptr, L"open", here.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+  ImGui::SetItemTooltip("Open this folder in Explorer");
   ImGui::SameLine();
   ImGui::SetNextItemWidth(100);
   ImGui::SliderFloat("##tiles", &ed.projectTileSize, 48, 128, "");
   ImGui::SetItemTooltip("Icon size");
   ImGui::Separator();
 
+  if (!ed.projectFolder.empty() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+      !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Backspace))
+    ed.projectFolder.clear();
+
   ImGui::BeginChild("##grid");
-  if (ed.assets.empty()) {
-    ImGui::TextDisabled("No .sl files in %s", ed.assetsDir.string().c_str());
-  }
   float tile = ed.projectTileSize;
   float cellW = tile + 28;
   int cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cellW));
-  // Three shelves: towns (environment files), the behavior files they use, and games.
-  struct Shelf {
-    const char* kind;
-    const char* title;
-    const char* hint;
-  };
-  static const Shelf kShelves[] = {
-      {"environment", "Towns", "environment files: buildings, residents, relationships, events. Double-click to run."},
-      {"behavior", "Behaviors", "behavior files: social rules, routines, activities. A town names the one it uses."},
-      {"library", "Library", "lib/: the defaults a file starts from with `import smallville`"},
-  };
-  for (const Shelf& shelf : kShelves) {
-  int shown = 0;
-  for (size_t i = 0; i < ed.assets.size(); ++i) {
-    Asset& a = ed.assets[i];
-    if (a.library ? std::string(shelf.kind) != "library" : a.kind != shelf.kind) continue;
-    if (shown == 0) {
-      ImGui::PushFont(ed.fonts.bold, 0.0f);
-      ImGui::TextUnformatted(shelf.title);
-      ImGui::PopFont();
-      ImGui::SameLine();
-      ImGui::TextDisabled("%s", shelf.hint);
-    }
+  auto place = [&](int& shown) {
     int col = shown++ % cols;
     if (col) ImGui::SameLine(col * cellW);
-    ImGui::PushID(static_cast<int>(i));
-    ImGui::BeginGroup();
-    ImVec2 p = ImGui::GetCursorScreenPos();
-    bool selected = ed.sel.kind == SelKind::Asset && ed.sel.index == (int)i;
-    float labelH = ImGui::GetTextLineHeight() * 2 + 4;
-    if (ImGui::InvisibleButton("##tile", ImVec2(cellW - 8, tile + labelH))) ed.sel = {SelKind::Asset, (int)i};
-    bool hovered = ImGui::IsItemHovered();
-    if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) loadAsset(ed, (int)i);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    if (selected || hovered)
-      dl->AddRectFilled(p, ImVec2(p.x + cellW - 8, p.y + tile + labelH),
-                        ImGui::GetColorU32(selected ? ImGuiCol_Header : ImGuiCol_HeaderHovered), 3);
-    scriptIcon(ed, ImVec2(p.x + (cellW - 8 - tile) * 0.5f, p.y + 2), tile - 4, (int)i == ed.activeAsset || (int)i == ed.townAsset);
-    // Name, wrapped to two lines, centered; a dot marks unsaved edits.
-    std::string label = (a.dirty() ? "* " : "") + a.name;
-    float wrap = cellW - 12;
-    ImVec2 ts = ImGui::CalcTextSize(label.c_str(), nullptr, false, wrap);
-    ImVec2 tp(p.x + (cellW - 8 - ts.x) * 0.5f, p.y + tile + 2);
-    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), tp,
-                selected ? IM_COL32(255, 255, 255, 255) : ImGui::GetColorU32(ImGuiCol_Text), label.c_str(), nullptr, wrap);
-    if (hovered)
-      ImGui::SetTooltip("%s%s%s\nDouble-click to %s", a.path.string().c_str(), a.detail.empty() ? "" : "\n",
-                        a.detail.c_str(), a.kind == "behavior" ? "run a town that uses it" : "load it");
-    if (ImGui::BeginPopupContextItem("##ctx")) {
-      if (ImGui::MenuItem("Load")) loadAsset(ed, (int)i);
-      if (ImGui::MenuItem("Edit Script")) {
-        a.scriptOpen = true;
-        a.focusScript = true;
+  };
+
+  if (ed.projectFolder.empty()) {
+    // The top level: one folder per town, then the library.
+    std::vector<std::string> towns;
+    for (auto& a : ed.assets)
+      if (!a.library && !a.town.empty() && std::find(towns.begin(), towns.end(), a.town) == towns.end())
+        towns.push_back(a.town);
+    if (towns.empty()) ImGui::TextDisabled("No towns yet. + New Town makes one.");
+    int shown = 0;
+    for (auto& town : towns) {
+      if (shown == 0) shelfTitle(ed, "Towns", "each town is a folder: its environment and behavior files. Double-click to open.");
+      place(shown);
+      int env = townEnvAsset(ed, town);
+      ImGui::PushID(town.c_str());
+      ImGui::BeginGroup();
+      bool selected = env >= 0 && ed.sel.kind == SelKind::Asset && ed.sel.index == env;
+      bool running = ed.townAsset >= 0 && ed.assets[ed.townAsset].town == town;
+      bool dirty = false;
+      for (auto& a : ed.assets) dirty |= a.town == town && a.dirty();
+      Tile t = drawTile(ed, (dirty ? "* " : "") + town, selected, true, running, tile, cellW);
+      if (t.clicked && env >= 0) ed.sel = {SelKind::Asset, env};
+      if (t.doubleClicked) ed.projectFolder = town;
+      if (t.hovered)
+        ImGui::SetTooltip("%s\n%s\nDouble-click to open  |  right-click to run", (ed.assetsDir / town).string().c_str(),
+                          env >= 0 ? ed.assets[env].detail.c_str() : "no environment file");
+      if (ImGui::BeginPopupContextItem("##ctx")) {
+        if (ImGui::MenuItem("Open")) ed.projectFolder = town;
+        if (ImGui::MenuItem("Run Town", nullptr, false, env >= 0)) runTown(ed, town);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Show in Explorer")) showInExplorer(ed.assetsDir / town);
+        ImGui::EndPopup();
       }
-      if (ImGui::MenuItem("Save", nullptr, false, a.dirty())) saveAsset(ed, (int)i);
-      ImGui::Separator();
-      if (ImGui::MenuItem("Show in Explorer")) {
-        std::wstring arg = L"/select,\"" + a.path.wstring() + L"\"";
-        ShellExecuteW(nullptr, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
-      }
-      ImGui::EndPopup();
+      ImGui::EndGroup();
+      ImGui::PopID();
     }
-    ImGui::EndGroup();
-    ImGui::PopID();
-  }
-  if (shown) ImGui::Spacing();
+    if (shown) ImGui::Spacing();
+
+    bool hasLib = false;
+    for (auto& a : ed.assets) hasLib |= a.library;
+    if (hasLib) {
+      shelfTitle(ed, "Library", "lib/: the defaults a town starts from with `import smallville`");
+      ImGui::PushID("lib");
+      Tile t = drawTile(ed, "lib", false, true, false, tile, cellW);
+      if (t.doubleClicked) ed.projectFolder = "lib";
+      if (t.hovered) ImGui::SetTooltip("%s\nDouble-click to open", (ed.assetsDir / "lib").string().c_str());
+      ImGui::PopID();
+      ImGui::Spacing();
+    }
+
+    // Anything still loose in games/ (from before towns were folders).
+    shown = 0;
+    for (size_t i = 0; i < ed.assets.size(); ++i) {
+      if (ed.assets[i].library || !ed.assets[i].town.empty()) continue;
+      if (shown == 0) shelfTitle(ed, "Loose files", "not in a town folder. Move each pair into games/NAME/ to make it a town.");
+      place(shown);
+      fileTile(ed, i, tile, cellW);
+    }
+  } else {
+    // Inside a folder: its files.
+    if (inLib) shelfTitle(ed, "Library", "the defaults towns import. Double-click to edit.");
+    else shelfTitle(ed, "Town", "the environment (the world) and behavior (how residents act). Double-click either to run.");
+    int shown = 0;
+    for (size_t i = 0; i < ed.assets.size(); ++i) {
+      if (ed.assets[i].town != ed.projectFolder) continue;
+      place(shown);
+      fileTile(ed, i, tile, cellW);
+    }
+    if (!inLib) {
+      bool hasEnv = townEnvAsset(ed, ed.projectFolder) >= 0, hasBeh = false;
+      for (auto& a : ed.assets) hasBeh |= a.town == ed.projectFolder && a.kind == "behavior";
+      if (!hasEnv || !hasBeh) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("This town is missing its %s file (%s%s).", !hasEnv ? "environment" : "behavior",
+                            ed.projectFolder.c_str(), !hasEnv ? ".env.sl" : ".behavior.sl");
+      }
+    }
   }
   ImGui::EndChild();
   ImGui::End();
@@ -252,7 +371,7 @@ void drawScripts(EditorState& ed) {
   for (size_t i = 0; i < ed.assets.size(); ++i) {
     Asset& a = ed.assets[i];
     if (!a.scriptOpen) continue;
-    std::string title = a.name + "###script:" + a.path.string();
+    std::string title = (a.town.empty() ? a.name : a.town + "/" + a.name) + "###script:" + a.path.string();
     if (ed.sceneDockId) ImGui::SetNextWindowDockID(ed.sceneDockId, ImGuiCond_FirstUseEver);
     if (a.focusScript) {
       ImGui::SetNextWindowFocus();
