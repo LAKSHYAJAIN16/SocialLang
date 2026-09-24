@@ -1,10 +1,93 @@
 # SocialLang
 
-> A domain-specific language for LLM-agent social games -- Mafia, trust games, whatever -- so you never rewrite the scaffolding again.
+> Simulate a town of LLM agents -- and whatever they get up to -- from two small files.
 
-It's a tree-walking interpreter for a small language whose whole job is describing LLM-agent social games -- Mafia, trust games, whatever comes next -- without rewriting Python scaffolding for each one. A `.sl` file declares a population, the roles they hold, the phases the game moves through, and each phase's rules as real code: variables, loops, conditionals, functions. No host language needed for a new game, just a `.sl` file. It also handles spatial worlds, scales to thousands of agents, and can stream a run live into a Unity viewer. Built on [MafiaSim](https://github.com/LAKSHYAJAIN16/LLM-mafia)'s LLM provider layer.
+Everything runs inside one setting: **smallville**, a town of residents who
+wake up, plan their day, walk to work, run into each other, talk, remember,
+pass news along, and reflect. You describe a town with two kinds of `.sl`
+file, and anything else you want to happen is played out inside that town.
 
-## A complete example
+| File | What it says |
+|---|---|
+| `NAME.env.sl` (environment) | The world: building types, buildings, residents, relationships, events and news, and how many extra residents to generate. |
+| `NAME.behavior.sl` (behavior) | How residents behave: social rules, daily routines, meals and free time, how each activity breaks into timed tasks, emoji and importance. |
+
+## Start from the library
+
+`games/lib/` holds the defaults. A file starts from them with one line and
+only says what's different:
+
+```
+// games/mytown.env.sl
+import smallville
+
+environment MyTown {
+  behavior: "mytown.behavior.sl"
+  days: 1
+  building "Hobbs Cafe" { floor: "#E8C07A" }     // merges into the library's cafe
+  resident "Ava Novak" {                          // a new resident
+    age: 29
+    traits: "curious, warm, a little restless"
+    background: "Ava Novak just moved to town and works at Hobbs Cafe."
+    routine: cafe_owner
+    home: "Moreno family's house"
+    work: "Hobbs Cafe"
+  }
+  remove building "Johnson Park"                  // drops one of the library's
+  generate { residents: 500 }                     // and 500 more, generated
+}
+```
+
+```
+// games/mytown.behavior.sl
+import smallville
+
+behavior MyTown {
+  rules { chattiness: 1.5 }                       // the whole town
+  rules student { strangers_talk: false }         // everyone on the student routine
+  rules "Klaus Mueller" { vision: 8 }             // one resident
+}
+```
+
+Fields replace the library's, a node with the same kind and name (`building
+"Hobbs Cafe"`, `routine student`) merges into it, and `remove kind "name"`
+drops one. Settings are scoped, and the most specific one wins: `style { }` <
+`type cafe { }` < `building "Hobbs Cafe" { }` for how buildings look, and
+`rules { }` < `rules student { }` < `rules "Name" { }` for how people act.
+
+`games/smallville.env.sl` is the library as is (25 residents, including a
+Valentine's Day party that spreads by word of mouth). `games/riverside.env.sl`
+grows it to 1,000 generated residents.
+
+## The app
+
+`cpp/` is **SocialSandbox**, a native C++ editor laid out like Unity's: the
+town in the World view, a Town tree of places and residents, an Inspector,
+a Rules panel, the Scenarios panel (Towns, Behaviors, Library), and
+Play / Pause / Step. Script tabs highlight `.sl` syntax, suggest words as you
+type (Ctrl+Space), and flag typos like `rotuine` with a one-click fix. Editing
+a building, a resident, or the rules in the app writes back into the files,
+and a file that imports a library is saved as only what it changes.
+
+Residents think with your own models: paste API keys in Model Settings, or
+point it at a local LLM (Ollama, LM Studio). With no model, an offline persona
+model follows the behavior file, fast enough for thousands of residents.
+Build and details: [cpp/README.md](cpp/README.md).
+
+```
+cpp\build.bat                                   :: SocialSandbox.exe + sl_run.exe
+cpp\build\SocialSandbox.exe                     :: opens smallville.env.sl
+cpp\build\sl_run.exe --town games\riverside.env.sl   :: headless run
+```
+
+## The original `sim` language
+
+Before towns, SocialLang was a language for one-off LLM-agent social games.
+The Python interpreter, the browser IDE, and the tests still use it, and its
+example scripts stay in `games/*.sl`. The native app shows only environment and
+behavior files.
+
+### A complete example
 
 `games/trust_game.sl`, verbatim -- two agents repeatedly choosing to cooperate or defect, no hidden roles:
 
@@ -58,7 +141,7 @@ sim TrustGame {
 
 `python -m sociallang.cli run games/trust_game.sl --mock-only` parses, populates, and plays this to completion.
 
-## Language basics
+### Language basics
 
 A program is one `sim <Name> { ... }` block: `agents` sets the population, `role` blocks define seat kinds (team, memory pattern, visibility, how many), an optional `world` block scatters spatial locations, and `phase`/`fn`/`win_condition`/`loop` are the actual game logic in ordinary imperative syntax (`if`, `while`, `for`, functions, lists, dicts). Roster assignment lives outside the language on purpose -- a `sim` describes shape, not which model fills which seat; `sociallang run` loads `config/models.yaml` and assigns one model per anonymized seat (`P1`, `P2`, ...).
 
@@ -66,21 +149,20 @@ Three memory patterns ship built in (`full_history`, `recent(n)`, and `generativ
 
 Full grammar, the complete built-in function reference, and design rationale live in [DESIGN.md](DESIGN.md).
 
-## Other ways to run it
+### Other ways to run it
 
 - **Browser, no install**: `web/index.html` is a self-contained IDE (lexer/parser/interpreter ported to JS), runs all seven example games against a mock provider client-side. See [web/README.md](web/README.md).
 - **SocialSandbox**: `sandbox/` renders a run as a night-sky chart -- agents flare with activity, conversations draw fading lines, reflections become new stars. Ships as a website (`npm run dev`) or Electron app (`npm run electron:dist`); reuses the same JS engine as the web IDE. See [sandbox/README.md](sandbox/README.md).
-- **SocialSandbox (native, `cpp/`)**: a C++ rewrite of the sandbox laid out like the Unity editor (Hierarchy, Scene, Inspector, Project, Console; Play/Pause/Step), with a native interpreter up to ~100x faster than the JS one on the mock, CPU-parallel bulk asks, and real models via your own API keys or a local LLM (Ollama, LM Studio). See [cpp/README.md](cpp/README.md).
 - **Unity, live**: `python -m sociallang.cli run games/village.sl --mock-only --live` streams events over a local WebSocket (`sociallang/engine/live.py`); `unity/SocialLangViewer` renders agents/locations on a 2D map or replays a saved `results/*.json`. See [unity/README.md](unity/README.md).
 
-## Setup
+### Setup
 
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 cp .env.example .env   # fill in your API keys
 ```
 
-## Running a game
+### Running a game
 
 ```
 python -m sociallang.cli check games/mafia.sl      # parse and report its shape
@@ -91,7 +173,7 @@ python -m sociallang.cli visualize results/Mafia_0000_....json   # regenerate th
 
 `--mock-only` needs no API key. Drop it (with `.env` + `config/models.yaml` filled in) to play with real LLMs. Useful `run` flags: `--games N`, `--seed N`, `--vendor`, `--embeddings`/`--llm-importance`.
 
-## Example games
+### Example games
 
 | Game | Agents | What it demonstrates |
 |---|---|---|

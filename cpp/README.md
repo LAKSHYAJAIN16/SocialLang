@@ -19,10 +19,29 @@ A town is two SocialLang files in `games/`:
   everyday meals, free-time choices, how each activity breaks into timed tasks
   at named objects, and the emoji and importance of activities.
 
-The environment names its behavior file, so towns can share or swap one.
-Nothing about a town is hard-coded. `oakhill.env.sl` (25 residents) and
-`riverside.env.sl` (1,000 generated residents on Oak Hill's behaviors) are
-examples.
+Both usually start from the **smallville library** in `games/lib/`:
+
+```
+import smallville
+environment MyTown {
+  behavior: "mytown.behavior.sl"
+  building "Hobbs Cafe" { floor: "#E8C07A" }   // merges into the library's
+  remove building "Johnson Park"               // drops one
+}
+```
+
+An import is looked up as `lib/NAME.env.sl` (or `.behavior.sl`) next to the
+file, then next to it, then in `../lib/`. Libraries can import libraries.
+Merging: fields replace, nodes with the same kind and name merge, routine and
+activity bodies replace wholesale, other line entries (emoji, importance, free
+time) merge by their first value, and `remove kind "name"` drops a node. When
+the app saves a file that imports a library, it writes only the differences
+(`diffConfig`), so the file stays short. Comments in a file the app rewrites
+are not kept.
+
+`smallville.env.sl` is the library as is. `riverside.env.sl` grows it to 1,000
+generated residents. **+ New Town** in the Scenarios panel makes an
+environment and a behavior file that import smallville.
 
 Settings have scopes, and the most specific one wins:
 
@@ -42,8 +61,8 @@ Every 10 game-seconds, each resident runs this loop:
 | React / converse | Seeing someone can start a conversation grounded in memory. News spreads through these conversations, so an invitation travels from person to person and guests turn up at the event. |
 | Reflect | Once the summed importance of new memories passes `reflect_after`, insights are written back to memory. |
 
-`sl_run --town games/oakhill.env.sl [--days N] [--residents N]` runs a town
-headless.
+`sl_run --town games/smallville.env.sl [--days N] [--residents N] [--save]`
+runs a town headless (`--save` rewrites its files canonically and stops).
 
 **Two kinds of cognition.** With a real model enabled in Model Settings,
 residents plan, talk, and reflect through that model, and fall back to the
@@ -56,10 +75,10 @@ Measured with the persona model on this 8-core ARM64 laptop:
 
 | Town | Game time | Wall time |
 |---|---|---|
-| Oak Hill, 25 residents | 2 days | 0.21 s |
-| Riverside, 1,000 residents | 1 day | 27.5 s |
+| Smallville, 25 residents | 2 days | 0.18 s |
+| Riverside, 1,025 residents | 1 day | 18.9 s |
 
-In the Oak Hill run, all 25 residents hear about the Valentine's Day party by
+In the Smallville run, all 25 residents hear about the Valentine's Day party by
 word of mouth and 16 plan to attend. Below about 600 residents a step is too
 small for the worker pool to pay off, so small towns run serially.
 
@@ -79,12 +98,12 @@ files from PowerShell or cmd. Git Bash's environment breaks MSVC linking.
 
 | Panel | What it is |
 |---|---|
-| **Toolbar** | Game picker on the left. **Play / Pause / Step** at top center, plus run-to-end. Play-mode speed, **Models**, and theme on the right. |
+| **Toolbar** | Town picker on the left. **Play / Pause / Step** at top center, plus run-to-end. Play-mode speed, **Models**, and theme on the right. |
 | **Hierarchy** | The sim as a scene graph: World (locations grouped by type) and Agents. Searchable. |
 | **Scene** | The world in 2D. Drag or right-drag to pan, scroll to zoom, **F** frames the selection. Agents turn team-colored once their role is revealed and show an ✕ when eliminated. Conversation lines fade over a few rounds. The timeline scrubs back through rounds. |
 | **Inspector** | Components for the selection: an agent's Transform, Agent, Persona, Plan, and Recent Activity; a location's occupants; the sim's seed and provider stats; a script's source. |
 | **Console** | The run's log, with per-kind toggles (Talk, Town, Reflect, Plans, Asks, Print, Errors) and search. Clicking a line selects its author. |
-| **Scenarios** | Every `.sl` in the games folder, shelved as Towns, Behaviors, and Games. Double-click one to load it. Right-click and choose *Edit Script* to open it in a tab beside the Scene. |
+| **Scenarios** | The games folder's environment and behavior files, shelved as Towns, Behaviors, and Library (`lib/`). Double-click a town to run it. Right-click and choose *Edit Script* to open a file in a tab beside the World view. **+ New Town** starts one from smallville. |
 | **Rules** | A town's social rules for the whole town, a group, or one resident. Changes apply mid-run and save to the behavior file. |
 
 **Script tabs** highlight SocialLang syntax. Ctrl+Space (or just typing)
@@ -107,7 +126,7 @@ The window layout is saved to `%APPDATA%\SocialSandbox\layout.ini`, and
 *Window > Reset Layout* restores the default.
 
 Launch flags (for scripted checks):
-`--town oakhill.env.sl --game city.sl --edit mafia.sl --seed 7 --steps 3 --to-end --select P12 --building "Hobbs Cafe" --light --settings`
+`--town riverside.env.sl --edit smallville.behavior.sl --seed 7 --steps 3 --to-end --select P12 --building "Hobbs Cafe" --light --settings`
 
 ## Models: your own keys, or local LLMs
 
