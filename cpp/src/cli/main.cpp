@@ -16,6 +16,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -93,6 +94,7 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 // sl_run --town FILE.env.sl [--days N] [--residents N] [--serial] [--log] [--save]:
 // run a town (an environment file + the behavior file it names), headless.
 int runTown(int argc, char** argv) {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // --log lines show up even if a run dies
   ville::VilleOptions o;
   bool log = false, save = false;
   std::string path;
@@ -120,7 +122,7 @@ int runTown(int argc, char** argv) {
   if (days > 0) o.spec.env.days = days;
   if (residents >= 0) o.spec.env.generate.residents = residents;
   std::vector<std::shared_ptr<sl::Provider>> roster = {std::make_shared<sl::MockProvider>(1)};
-  long long counts[6] = {};
+  long long counts[8] = {};
   auto t0 = Clock::now();
   ville::Ville v(o, roster, [&](const ville::VilleEvent& e) {
     ++counts[e.kind];
@@ -149,6 +151,22 @@ int runTown(int argc, char** argv) {
   for (size_t n = 0; n < v.news().size(); ++n)
     std::printf("  \"%s\": %d heard%s\n", v.news()[n].name.empty() ? v.news()[n].text.c_str() : v.news()[n].name.c_str(),
                 heard[n], v.news()[n].invite ? (", " + std::to_string(going[n]) + " going").c_str() : "");
+  if (const ville::CaseState& c = v.mystery(); c.on) {
+    auto name = [&](int i) { return i >= 0 ? v.agents()[i].p.name : std::string("nobody"); };
+    std::printf("  case \"%s\": killer %s, scapegoat %s\n", c.name.c_str(), name(c.killer).c_str(), name(c.scapegoat).c_str());
+    for (auto& cr : c.crimes)
+      std::printf("    %s killed at %s, day %lld %02lld:%02lld, found by %s\n", name(cr.victim).c_str(),
+                  cr.sector >= 0 ? v.world().sectors[cr.sector].name.c_str() : "the street", (long long)(cr.at / 1440 + 1),
+                  (long long)(cr.at % 1440 / 60), (long long)(cr.at % 60), cr.discovered ? name(cr.finder).c_str() : "(undiscovered)");
+    for (auto& vd : c.verdicts) {
+      std::map<int, int> tally;
+      for (auto& [voter, s] : vd.votes) ++tally[s];
+      std::string t;
+      for (auto& [s, n] : tally) t += " " + name(s) + "=" + std::to_string(n);
+      std::printf("    day %d vote:%s -> %s%s\n", vd.day + 1, t.c_str(), name(vd.accused).c_str(), vd.correct ? " (the killer)" : "");
+    }
+    std::printf("    outcome: %s\n", c.outcome.empty() ? "(still open)" : c.outcome.c_str());
+  }
   return 0;
 }
 
