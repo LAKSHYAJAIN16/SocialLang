@@ -275,9 +275,43 @@ std::string findLibrary(const std::string& dir, const std::string& name, const s
   std::error_code ec;
   fs::path d = dir.empty() ? fs::path(".") : fs::path(dir);
   std::string file = name.size() > 3 && name.ends_with(".sl") ? name : name + ext;
-  for (fs::path p : {d / "lib" / file, d / file, d.parent_path() / "lib" / file})
+  // lib/ first, beside the file or one folder up (a town folder's files import
+  // games/lib/), so a town named after its library never imports itself.
+  for (fs::path p : {d / "lib" / file, d.parent_path() / "lib" / file, d / file})
     if (fs::exists(p, ec)) return p.string();
   return "";
+}
+
+std::string townEnvPath(const std::string& path) {
+  std::error_code ec;
+  if (!fs::is_directory(path, ec)) return path;
+  fs::path folder(path);
+  std::string match, any;
+  for (auto& entry : fs::directory_iterator(folder, ec)) {
+    std::string name = entry.path().filename().string();
+    if (!name.ends_with(".env.sl")) continue;
+    if (name == folder.filename().string() + ".env.sl") match = entry.path().string();
+    if (any.empty()) any = entry.path().string();
+  }
+  return match.empty() ? any : match;
+}
+
+std::string townBehaviorPath(const std::string& envPath) {
+  std::error_code ec;
+  fs::path env(envPath), folder = env.parent_path();
+  std::string stem = env.filename().string();
+  stem = stem.substr(0, stem.size() - std::string(".env.sl").size());
+  std::string match, only;
+  int count = 0;
+  for (auto& entry : fs::directory_iterator(folder.empty() ? fs::path(".") : folder, ec)) {
+    std::string name = entry.path().filename().string();
+    if (!name.ends_with(".behavior.sl")) continue;
+    ++count;
+    only = entry.path().string();
+    if (name == stem + ".behavior.sl") match = only;
+  }
+  if (!match.empty()) return match;
+  return count == 1 ? only : "";
 }
 
 // ---------------- environment
@@ -622,8 +656,10 @@ BuildingSpec* TownSpec::findBuilding(const std::string& name) {
   return nullptr;
 }
 
-TownSpec TownSpec::load(const std::string& envPath) {
+TownSpec TownSpec::load(const std::string& path) {
   TownSpec t;
+  std::string envPath = townEnvPath(path);  // a town folder, or its environment file
+  if (envPath.empty()) throw sl::ParseError(fs::path(path).filename().string() + " has no environment file (NAME.env.sl)");
   t.envPath = envPath;
   std::string file = fs::path(envPath).filename().string();
   try {
@@ -631,17 +667,24 @@ TownSpec TownSpec::load(const std::string& envPath) {
   } catch (const sl::ParseError& e) {
     throw sl::ParseError(file + ", " + e.what());
   }
-  if (!t.env.behavior.empty()) {
-    // Next to the environment file, else in lib/ (a library's own behaviors).
-    fs::path dir = fs::path(envPath).parent_path();
-    std::error_code ec;
-    t.behaviorPath = (dir / t.env.behavior).string();
-    if (!fs::exists(t.behaviorPath, ec) && fs::exists(dir / "lib" / t.env.behavior, ec))
-      t.behaviorPath = (dir / "lib" / t.env.behavior).string();
+  fs::path dir = fs::path(envPath).parent_path();
+  std::error_code ec;
+  // Which behavior file: one the environment names that sits beside it, else
+  // the town folder's own, else the named one in lib/. The town's own file wins
+  // over lib/ because `import smallville` hands every town the library's
+  // `behavior: "smallville.behavior.sl"`, and that must not pull a town's
+  // behaviors (or its saves) out of its folder.
+  const std::string& named = t.env.behavior;
+  if (!named.empty() && fs::exists(dir / named, ec)) t.behaviorPath = (dir / named).string();
+  if (t.behaviorPath.empty()) t.behaviorPath = townBehaviorPath(envPath);
+  for (fs::path lib : {dir / "lib", dir.parent_path() / "lib"})
+    if (t.behaviorPath.empty() && !named.empty() && fs::exists(lib / named, ec)) t.behaviorPath = (lib / named).string();
+  if (!t.behaviorPath.empty()) {
+    std::string name = fs::path(t.behaviorPath).filename().string();
     try {
       t.behavior = parseBehavior(readText(t.behaviorPath), fs::path(t.behaviorPath).parent_path().string());
     } catch (const sl::ParseError& e) {
-      throw sl::ParseError(t.env.behavior + ", " + e.what());
+      throw sl::ParseError(name + ", " + e.what());
     }
   }
   return t;

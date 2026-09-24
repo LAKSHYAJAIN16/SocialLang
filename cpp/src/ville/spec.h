@@ -168,19 +168,26 @@ struct TownSpec {
   BuildingSpec styleFor(const BuildingSpec& building) const;
   BuildingSpec* findBuilding(const std::string& name);
 
-  // Loads an environment file and the behavior file it names (throws
-  // sl::ParseError with the file and line on a syntax error).
-  static TownSpec load(const std::string& envPath);
+  // Loads a town: its folder (games/NAME/) or its environment file, plus the
+  // behavior file -- the one the environment names, else the one in the
+  // town's folder. Throws sl::ParseError with the file and line on a syntax error.
+  static TownSpec load(const std::string& path);
   // Writes both files back in canonical form (used by the editor's panels).
   bool save() const;
 };
 
 // `dir` is the file's folder, where `import name` looks for lib/name.env.sl
-// (then name.env.sl); likewise .behavior.sl for behavior files.
+// (there or one folder up), then name.env.sl; likewise .behavior.sl.
 EnvironmentSpec parseEnvironment(const std::string& source, const std::string& dir = "");
 BehaviorSpec parseBehavior(const std::string& source, const std::string& dir = "");
 // The file an import resolves to, or "" if there is none.
 std::string findLibrary(const std::string& dir, const std::string& name, const std::string& ext);
+// A town is a folder holding NAME.env.sl and NAME.behavior.sl. The
+// environment file for a folder (or `path` itself if it's already a file).
+std::string townEnvPath(const std::string& path);
+// The behavior file in an environment file's folder: NAME.behavior.sl, or the
+// only .behavior.sl there; "" if there isn't one.
+std::string townBehaviorPath(const std::string& envPath);
 std::string writeEnvironment(const EnvironmentSpec& e);
 std::string writeBehavior(const BehaviorSpec& b);
 // "environment" / "behavior" / "sim" / "" -- what kind of .sl a file is.

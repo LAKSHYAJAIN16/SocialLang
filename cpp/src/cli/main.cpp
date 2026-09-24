@@ -90,8 +90,8 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 
 }  // namespace
 
-// sl_run --town FILE.env.sl [--days N] [--residents N] [--serial] [--log] [--save]:
-// run a town (an environment file + the behavior file it names), headless.
+// sl_run --town games/NAME [--days N] [--residents N] [--serial] [--log] [--save]:
+// run a town (its folder, or its NAME.env.sl), headless.
 int runTown(int argc, char** argv) {
   ville::VilleOptions o;
   bool log = false, save = false;
