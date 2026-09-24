@@ -32,7 +32,7 @@ const char* kGameNames[] = {"agents", "author", "capacity", "cause", "chunks", "
 // Block words of environment and behavior files -- highlighted as declarations.
 const char* kEnvBlocks[] = {"import", "remove", "environment", "style", "type", "building", "room", "bedroom", "resident", "relationship",
                             "event", "news", "generate", "one_per", "routine"};
-const char* kBehaviorBlocks[] = {"import", "remove", "behavior", "rules", "routine", "everyday", "free_time", "activity", "emoji",
+const char* kBehaviorBlocks[] = {"import", "remove", "behavior", "mystery", "rules", "routine", "everyday", "free_time", "activity", "emoji",
                                  "importance", "default", "at", "or", "wake", "sleep", "social"};
 
 // Field names (the word before ':').
@@ -42,7 +42,8 @@ const char* kEnvFields[] = {"behavior", "start", "start_hour", "days", "seed", "
                             "text", "at", "invite", "day", "hours", "activity", "from", "residents", "first_names",
                             "last_names", "weight", "works_at", "ages", "small", "regular", "large", "yes", "no"};
 const char* kBehaviorFields[] = {"chattiness", "time_between_chats", "conversation_length", "strangers_talk",
-                                 "news_eagerness", "invite_acceptance", "vision", "attention", "reflect_after"};
+                                 "news_eagerness", "invite_acceptance", "vision", "attention", "reflect_after",
+                                 "killer", "victim", "time", "meeting", "meeting_hours", "rounds", "random"};
 // Building types and the placeholders activity text can use.
 const char* kKinds[] = {"home", "cafe", "pub", "store", "market", "park", "college", "dorm", "office", "work"};
 
