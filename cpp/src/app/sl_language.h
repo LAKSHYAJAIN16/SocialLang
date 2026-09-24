@@ -30,6 +30,6 @@ std::vector<SlTypo> findTypos(const std::string& text, const std::string& kind);
 
 // Parses the text as its kind; returns false with a message and the 1-based
 // line (0 if unknown) on a syntax error.
-bool checkSource(const std::string& text, const std::string& kind, std::string& message, int& line);
+bool checkSource(const std::string& text, const std::string& kind, const std::string& dir, std::string& message, int& line);
 
 }  // namespace app

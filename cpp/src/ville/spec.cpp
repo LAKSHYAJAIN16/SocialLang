@@ -573,6 +573,11 @@ std::string slFileKind(const std::string& source) {
     }
     size_t j = i;
     while (j < source.size() && (std::isalnum(static_cast<unsigned char>(source[j])) || source[j] == '_')) ++j;
+    if (source.compare(i, j - i, "import") == 0) {  // `import name` lines come first
+      i = source.find('\n', j);
+      if (i == std::string::npos) return "";
+      continue;
+    }
     return source.substr(i, j - i);
   }
   return "";

@@ -30,9 +30,9 @@ const char* kGameNames[] = {"agents", "author", "capacity", "cause", "chunks", "
                             "topic", "type", "width", "x", "y"};
 
 // Block words of environment and behavior files -- highlighted as declarations.
-const char* kEnvBlocks[] = {"environment", "style", "type", "building", "room", "bedroom", "resident", "relationship",
+const char* kEnvBlocks[] = {"import", "remove", "environment", "style", "type", "building", "room", "bedroom", "resident", "relationship",
                             "event", "news", "generate", "one_per", "routine"};
-const char* kBehaviorBlocks[] = {"behavior", "rules", "routine", "everyday", "free_time", "activity", "emoji",
+const char* kBehaviorBlocks[] = {"import", "remove", "behavior", "rules", "routine", "everyday", "free_time", "activity", "emoji",
                                  "importance", "default", "at", "or", "wake", "sleep", "social"};
 
 // Field names (the word before ':').
@@ -251,12 +251,12 @@ std::vector<SlTypo> findTypos(const std::string& text, const std::string& kind) 
   return out;
 }
 
-bool checkSource(const std::string& text, const std::string& kind, std::string& message, int& line) {
+bool checkSource(const std::string& text, const std::string& kind, const std::string& dir, std::string& message, int& line) {
   message.clear();
   line = 0;
   try {
-    if (kind == "environment") ville::parseEnvironment(text);
-    else if (kind == "behavior") ville::parseBehavior(text);
+    if (kind == "environment") ville::parseEnvironment(text, dir);
+    else if (kind == "behavior") ville::parseBehavior(text, dir);
     else sl::parseProgram(text);
     return true;
   } catch (const std::exception& e) {
