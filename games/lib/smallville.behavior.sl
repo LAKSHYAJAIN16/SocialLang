@@ -1,8 +1,9 @@
-// How Oak Hill's residents behave: social rules, daily routines, and how
-// activities break into tasks. Scopes: rules { } is the whole town,
+// The smallville library's behaviors: social rules, daily routines, and how
+// activities break into tasks. Start from it with `import smallville`. Scopes: rules { } is the whole town,
 // rules <routine> { } a group, rules "Name" { } one resident -- the most
 // specific one applies.
-behavior OakHill {
+behavior Smallville {
+	
   rules {
     chattiness: 1
     time_between_chats: 3   // game-hours
@@ -91,22 +92,26 @@ behavior OakHill {
     12..13        "having lunch at the cafe" at cafe or "having lunch at home" at home
     13..16        "{currently}" at library
   }
+  
   routine retiree {
     wake+1..10    "tending the garden at home" at home
     10..12        "taking a walk in the park" at park
     12..13        "having lunch at the cafe" at cafe or "having lunch at home" at home
     13..15        "shopping for groceries at the market" at market
   }
+  
   routine writer {
     wake+1..12    "writing" at work
     12..13        "having lunch at the cafe" at cafe or "having lunch at home" at home
     13..17        "{currently}" at work
   }
+  
   routine engineer {
     wake+1..12    "coding at the desk" at work
     12..13        "having lunch at the cafe" at cafe or "having lunch at home" at home
     13..17        "{currently}" at work
   }
+  
   routine lawyer {
     wake+1..12    "working with clients" at work
     12..13        "having lunch at the cafe" at cafe or "having lunch at home" at home
@@ -133,6 +138,7 @@ behavior OakHill {
   activity "sleep" {
     "sleeping" "bed" 60
   }
+  s
   activity "morning routine" {
     "waking up and stretching" "bed" 5
     "using the bathroom" "toilet" 5

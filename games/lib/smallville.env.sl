@@ -1,7 +1,9 @@
-// The world of Oak Hill: buildings, residents, relationships, and events.
-// How its residents behave lives in oakhill.behavior.sl.
-environment OakHill {
-  behavior: "oakhill.behavior.sl"
+// The smallville library: the default town. Buildings, residents,
+// relationships, and events. Start a town from it with `import smallville`
+// and change only what's different. Its residents' behavior is
+// smallville.behavior.sl.
+environment Smallville {
+  behavior: "smallville.behavior.sl"
   start: "Monday, February 13, 2023"
   start_hour: 6
   days: 2
@@ -16,6 +18,7 @@ environment OakHill {
     room "bathroom" { objects: ["toilet", "shower", "bathroom sink"] }
     bedroom { objects: ["bed", "closet", "desk"] }
   }
+  
   type cafe {
     size: large
     floor: "#D9B38C"
@@ -23,22 +26,26 @@ environment OakHill {
     room "counter" { objects: ["behind the cafe counter", "coffee machine"] }
     room "cafe kitchen" { objects: ["cooking area", "refrigerator"] }
   }
+  
   type pub {
     floor: "#8B6A47"
     room "pub" { objects: ["bar customer seating", "bar customer seating", "pool table", "karaoke machine"] }
     room "bar" { objects: ["behind the bar counter", "beer taps"] }
   }
+  
   type store {
     floor: "#B8B8A8"
     room "supply store" { objects: ["supply store shelf", "supply store shelf", "behind the supply store counter"] }
     room "storage room" { objects: ["storage shelf"] }
   }
+  
   type market {
     size: large
     floor: "#D8D8BC"
     room "grocery store" { objects: ["grocery shelf", "grocery shelf", "behind the grocery counter"] }
     room "pharmacy" { objects: ["pharmacy counter", "behind the pharmacy counter"] }
   }
+  
   type college {
     size: large
     floor: "#C9B79C"
@@ -56,6 +63,7 @@ environment OakHill {
     room "dorm bathroom" { objects: ["toilet", "shower"] }
     bedroom "dorm room" { objects: ["bed", "desk"] }
   }
+  
   type "town hall" {
     size: large
     floor: "#CFC6B0"
@@ -68,6 +76,7 @@ environment OakHill {
     room "office" { objects: ["office desk", "office desk", "office desk", "coffee maker"] }
     room "meeting room" { objects: ["meeting table"] }
   }
+  
   type park {
     objects: ["park bench", "park bench", "park garden", "picnic table"]
   }
