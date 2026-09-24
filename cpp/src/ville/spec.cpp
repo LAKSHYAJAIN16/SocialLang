@@ -511,6 +511,21 @@ BehaviorSpec parseBehavior(const std::string& source, const std::string& dir) {
     } else if (c.kind == "emoji") {
       for (auto& l : c.lines)
         if (l.size() >= 2) b.emoji.push_back({l[0].text(), l[1].text()});
+    } else if (c.kind == "mystery") {
+      MysterySpec& m = b.mystery;
+      m.on = true;
+      m.name = c.arg(0, m.name);
+      m.killer = c.str("killer", m.killer);
+      m.victim = c.str("victim", m.victim);
+      m.at = c.str("at", m.at);
+      m.meeting = c.str("meeting", m.meeting);
+      m.day = static_cast<int>(c.num("day", m.day));
+      m.minute = static_cast<int>(c.num("time", m.minute / 60.0) * 60 + 0.5);
+      m.rounds = static_cast<int>(c.num("rounds", m.rounds));
+      if (const CValue* h = c.field("meeting_hours"); h && h->kind == CValue::Range) {
+        m.meetingStart = static_cast<int>(h->n * 60);
+        m.meetingEnd = static_cast<int>(h->n2 * 60);
+      }
     } else if (c.kind == "importance") {
       for (auto& l : c.lines)
         if (l.size() >= 2) b.importance.push_back({l[0].text(), static_cast<float>(l[1].number(3))});
@@ -555,7 +570,17 @@ std::string writeBehavior(const BehaviorSpec& b) {
   for (auto& [k, e] : b.emoji) o << "    " << quote(k) << " " << quote(e) << "\n";
   o << "  }\n\n  // how important a memory of an activity is (1-10), by keyword\n  importance {\n";
   for (auto& [k, v] : b.importance) o << "    " << quote(k) << " " << fmtNum(v) << "\n";
-  o << "  }\n}\n";
+  o << "  }\n";
+  if (const MysterySpec& m = b.mystery; m.on) {
+    auto who = [](const std::string& s) { return s == "random" ? s : quote(s); };
+    o << "\n  mystery " << quote(m.name) << " {\n"
+      << "    killer: " << who(m.killer) << "\n    victim: " << who(m.victim) << "\n";
+    if (!m.at.empty()) o << "    at: " << quote(m.at) << "\n";
+    o << "    day: " << m.day << "\n    time: " << fmtNum(m.minute / 60.0) << "\n    meeting: " << quote(m.meeting)
+      << "\n    meeting_hours: " << fmtNum(m.meetingStart / 60.0) << ".." << fmtNum(m.meetingEnd / 60.0)
+      << "\n    rounds: " << m.rounds << "\n  }\n";
+  }
+  o << "}\n";
   return o.str();
 }
 

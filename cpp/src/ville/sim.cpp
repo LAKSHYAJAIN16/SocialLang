@@ -13,7 +13,6 @@ namespace ville {
 namespace {
 
 std::mutex gEmitMu;
-constexpr int kGridCell = 8;
 
 const char* kDays[] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
 const char* kMonths[] = {"January", "February", "March",     "April",   "May",      "June",
@@ -127,6 +126,7 @@ void Ville::setupAgents() {
   gridW_ = world_.width() / kGridCell + 1;
   gridH_ = world_.height() / kGridCell + 1;
   grid_.assign(gridW_ * gridH_, {});
+  setupMystery();
 }
 
 int64_t Ville::minutesSinceStart() const { return static_cast<int64_t>(opts_.spec.env.startHour) * 60 + step_ * kSecondsPerStep / 60; }
@@ -149,6 +149,10 @@ void Ville::emit(int kind, int agent, const std::string& text, int other) {
 // agent's own home or workplace, or the nearest place of that kind.
 int Ville::resolveSector(const Agent& a, const std::string& place) const {
   if (place == "home") return a.p.home;
+  if (place.rfind("sector:", 0) == 0) {
+    int s = std::atoi(place.c_str() + 7);
+    return s >= 0 && s < (int)world_.sectors.size() ? s : a.p.home;
+  }
   if (place.rfind("event:", 0) == 0) {
     int n = std::atoi(place.c_str() + 6);
     return n >= 0 && n < (int)news_.size() ? news_[n].sector : a.p.home;
@@ -224,7 +228,8 @@ void Ville::rebuildGrid() {
 // in the agent's recent memory isn't recorded again.
 void Ville::perceive(int i, std::vector<MemoryNode>& out) {
   Agent& a = agents_[i];
-  if (a.asleep) return;
+  if (a.asleep || a.dead || a.arrested) return;
+  recordSightings(i);
   const SocialRules& rules = rulesFor(i);
   int r = rules.visionRadius;
   int myArena = world_.arenaAt(a.x, a.y);
@@ -256,6 +261,11 @@ void Ville::perceive(int i, std::vector<MemoryNode>& out) {
         // Someone else's routine is less poignant than one's own life.
         m.poignancy = std::max(1.0f, cog_->importance(b.action) - 2);
         m.person = j;
+        if (b.dead) {  // a body: the step marks it found
+          m.description = b.p.name + " is lying dead on the floor";
+          m.poignancy = 10;
+          m.news = -2;
+        }
         out.push_back(std::move(m));
         ++seen;
       }
@@ -282,6 +292,7 @@ void Ville::planDay(int i) {
   cog_->planDay(*this, i, rng, a.dailyPlan, a.schedule);
   a.day = dayIndex();
   applyInvites(i);
+  applyMystery(i);
   std::string summary;
   for (size_t k = 0; k < a.dailyPlan.size() && k < 6; ++k) summary += (k ? "; " : "") + a.dailyPlan[k];
   emit(1, i, "Plan for today: " + summary);
@@ -377,6 +388,7 @@ void Ville::learn(int i, int n, int from) {
   m.person = from;
   addMemory(i, std::move(m));
   emit(4, i, a.p.name + " heard from " + agents_[from].p.name + ": " + news_[n].text, from);
+  if (case_.on && news_[n].name.rfind("the murder of ", 0) == 0) applyMystery(i);
 }
 
 void Ville::beginChat(int a, int b) {
@@ -386,7 +398,8 @@ void Ville::beginChat(int a, int b) {
   int share = -1;
   for (int n : A.knows)
     if (std::find(B.knows.begin(), B.knows.end(), n) == B.knows.end()) {
-      if (share < 0 || news_[n].origin == a) share = n;
+      if (share >= 0 && news_[share].name.rfind("the murder of ", 0) == 0) continue;
+      if (share < 0 || news_[n].origin == a || news_[n].name.rfind("the murder of ", 0) == 0) share = n;
     }
   auto rng = rngFor(a, 0xC4A7 + b);
   auto lines = cog_->converse(*this, a, b, share, rng);
@@ -404,8 +417,13 @@ void Ville::beginChat(int a, int b) {
     p->emoji = "\xF0\x9F\x92\xAC";
   }
   A.lastChat[b] = B.lastChat[a] = step_;
+  bool caseTalk = caseTopic(a, b, share);
   // Knowledge transfer happens when the news is actually said.
-  if (share >= 0) {
+  if (caseTalk) {
+    if (share >= 0) learn(b, share, a);
+    shareEvidence(a, b);
+    shareEvidence(b, a);
+  } else if (share >= 0) {
     learn(b, share, a);
     if (news_[share].invite) {
       // Did B accept? The reply right after the invite line decides.
@@ -471,6 +489,7 @@ void Ville::reflect(int i) {
 
 bool Ville::step() {
   if (dayIndex() >= opts_.spec.env.days) return true;
+  updateMystery();
   int n = static_cast<int>(agents_.size());
   int minute = minuteOfDay();
   // Measured: below ~600 residents a step is too small to amortize the pool
@@ -492,14 +511,20 @@ bool Ville::step() {
   std::vector<std::vector<MemoryNode>> seen(n);
   par([&](size_t i) { perceive(static_cast<int>(i), seen[i]); });
   for (int i = 0; i < n; ++i)
-    for (auto& m : seen[i]) addMemory(i, std::move(m));
+    for (auto& m : seen[i]) {
+      if (m.news == -2) {  // found a body
+        m.news = -1;
+        if (case_.on) discover(i, m.person);
+      }
+      addMemory(i, std::move(m));
+    }
 
   // 2. React: someone perceived nearby may start a conversation (sequential,
   //    so pairings are deterministic).
   for (int i = 0; i < n; ++i) {
-    if (agents_[i].asleep || agents_[i].chatWith >= 0) continue;
+    if (agents_[i].asleep || agents_[i].chatWith >= 0 || agents_[i].dead || agents_[i].arrested) continue;
     for (auto& m : seen[i]) {
-      if (m.person < 0) continue;
+      if (m.person < 0 || agents_[m.person].dead || agents_[m.person].arrested) continue;
       auto rng = rngFor(i, 0x7A1C + m.person);
       if (cog_->wantsToChat(*this, i, m.person, rng)) {
         beginChat(i, m.person);
@@ -525,7 +550,9 @@ bool Ville::step() {
   par([&](size_t idx) {
     int i = static_cast<int>(idx);
     Agent& a = agents_[i];
-    if (a.chatWith >= 0) return;
+    if (a.chatWith >= 0 || a.dead || a.arrested) return;
+    if (case_.phase == CaseState::Hunting && i == case_.killer) return;  // the hunt steers them
+    if (case_.phase == CaseState::Undiscovered && i == case_.searcher) return;  // so does the search
     bool awakeTime = minute >= a.p.wakeHour * 60 && minute < std::min(a.p.sleepHour, 24) * 60;
     if (a.day != dayIndex() && awakeTime) planDay(i);
     if (a.schedule.size() != 24) return;
@@ -537,7 +564,7 @@ bool Ville::step() {
   // 5. Move one tile along the path (parallel).
   par([&](size_t i) {
     Agent& a = agents_[i];
-    if (a.chatWith >= 0 || a.path.empty()) return;
+    if (a.chatWith >= 0 || a.path.empty() || a.dead || a.arrested) return;
     a.x = a.path.front().first;
     a.y = a.path.front().second;
     a.path.erase(a.path.begin());
@@ -557,7 +584,8 @@ bool Ville::step() {
   // 7. Reflect once enough has happened (parallel -- LLM-heavy when live).
   std::vector<int> reflecting;
   for (int i = 0; i < n; ++i)
-    if (agents_[i].importanceSinceReflect >= rulesFor(i).reflectThreshold && !agents_[i].asleep) reflecting.push_back(i);
+    if (agents_[i].importanceSinceReflect >= rulesFor(i).reflectThreshold && !agents_[i].asleep && !agents_[i].dead)
+      reflecting.push_back(i);
   if (!reflecting.empty()) {
     auto fn = [&](size_t k) { reflect(reflecting[k]); };
     if (opts_.parallel) sl::ThreadPool::shared().parallelFor(reflecting.size(), fn, 1);

@@ -40,6 +40,7 @@ constexpr int kSecondsPerStep = 10;
 constexpr int kStepsPerMinute = 60 / kSecondsPerStep;
 constexpr int kStepsPerHour = 60 * kStepsPerMinute;
 constexpr int kStepsPerDay = 24 * kStepsPerHour;
+constexpr int kGridCell = 8;  // perception grid cell, in tiles
 
 enum class NodeType : uint8_t { Event, Chat, Thought };
 
@@ -87,6 +88,15 @@ struct Task {
   std::string emoji;
 };
 
+// Someone seen somewhere at some time: what a mystery's evidence is made of.
+// `from` is who told us (-1: we saw it ourselves).
+struct Sighting {
+  int who = -1, sector = -1;  // sector -1: out on the street
+  int64_t minute = 0;         // minutes since the start of day 0
+  int from = -1;
+  int fleeing = -1;           // the sector they were hurrying away from, if they were
+};
+
 struct Agent {
   Persona p;
   int x = 0, y = 0;
@@ -124,15 +134,53 @@ struct Agent {
   std::unordered_map<int, size_t> lastSeen;
   std::vector<int> attending;  // invites accepted
 
+  // Mysteries
+  bool dead = false, arrested = false;
+  std::vector<Sighting> sightings;
+  std::unordered_map<int, std::pair<int, int64_t>> lastSighting;  // who -> (sector, minute)
+  // Someone whose story ("I was home all night") contradicts what this
+  // resident saw: who -> the sighting that caught them.
+  std::unordered_map<int, Sighting> caughtLying;
+
   sl::Provider* provider = nullptr;
   uint32_t rngState = 0;
+};
+
+// The state of a mystery (see MysterySpec).
+struct Crime {
+  int victim = -1, sector = -1;
+  int64_t at = 0;             // minutes since the start of day 0
+  bool discovered = false;
+  int finder = -1;
+};
+
+struct Verdict {
+  int day = 0;
+  std::vector<std::pair<int, int>> votes;  // (voter, suspect or -1)
+  int accused = -1;                        // -1: no majority, nobody arrested
+  bool correct = false;
+};
+
+struct CaseState {
+  bool on = false;
+  std::string name;
+  enum Phase { Waiting, Hunting, Undiscovered, Investigating, Solved, KillerWon } phase = Waiting;
+  int killer = -1, target = -1, scapegoat = -1;
+  int searcher = -1;  // sent looking for an undiscovered victim
+  int crimeDay = 0, crimeMinute = 0;  // the next (or current) crime
+  int meetingSector = -1, meetingDay = -1;
+  int news = -1;  // the latest "found dead" news
+  int round = 1;
+  std::vector<Crime> crimes;
+  std::vector<Verdict> verdicts;
+  std::string outcome;
 };
 
 class Cognition;
 
 struct VilleEvent {  // a log line for the UI
   int64_t step;
-  int kind;  // 0 action, 1 plan, 2 dialogue, 3 reflection, 4 news, 5 error
+  int kind;  // 0 action, 1 plan, 2 dialogue, 3 reflection, 4 news, 5 error, 6 case (public), 7 secret
   int agent;
   int other = -1;
   std::string text;
@@ -181,6 +229,18 @@ class Ville {
   }
   bool llmCognition() const { return llm_; }
 
+  // Mysteries
+  const CaseState& mystery() const { return case_; }
+  bool knowsCase(int agent) const;
+  // Who `agent` suspects, most suspicious first (empty before a body is found).
+  std::vector<std::pair<int, float>> suspects(int agent) const;
+  // Why `agent` suspects (or clears) `suspect`: "I saw Ryan Park at Hobbs Cafe around 8:40 pm".
+  std::vector<std::string> evidence(int agent, int suspect) const;
+  // What `speaker` says about the case to `listener` ("" if it isn't their topic).
+  std::string caseLine(int speaker, int listener) const;
+  bool caseTopic(int a, int b, int share) const;
+  std::string minuteText(int64_t minute) const;  // "8:40 pm", "yesterday at 8:40 pm"
+
   std::atomic<bool> cancel{false};
   std::atomic<long long> calls{0}, errors{0};
 
@@ -216,6 +276,18 @@ class Ville {
   void reflect(int i);
   void learn(int i, int news, int from);
   void applyInvites(int i);
+
+  // mystery.cpp
+  CaseState case_;
+  void setupMystery();
+  void updateMystery();  // start of every step: the hunt, the crime, discovery deadlines, the vote
+  void recordSightings(int i);
+  void kill(int victim);
+  void discover(int finder, int victim);
+  void applyMystery(int i);  // the meeting takes over that day's hours
+  void holdVote();
+  void shareEvidence(int from, int to);
+  void startHunt();
 };
 
 // The clock for a step of a town: "Monday, February 13, 2023 -- 8:32 am", or

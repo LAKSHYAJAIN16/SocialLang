@@ -31,6 +31,9 @@ class Cognition {
   // Lines as (speaker, text). `news` is what the opener chose to share (-1: none).
   virtual std::vector<std::pair<int, std::string>> converse(Ville& v, int a, int b, int news, sl::SeededRandom& rng) = 0;
   virtual std::vector<std::string> reflect(Ville& v, int agent, sl::SeededRandom& rng) = 0;
+  // Mysteries: whom `voter` votes to arrest (-1: nobody). The persona model
+  // votes for their top suspect; the killer, for the scapegoat.
+  virtual int accuse(Ville& v, int voter, const std::vector<int>& candidates, sl::SeededRandom& rng);
   virtual float importance(const std::string& desc) const;
   virtual std::string emoji(const std::string& desc) const;
   virtual void setBehavior(const BehaviorSpec* b) { behavior_ = b; }

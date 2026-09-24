@@ -191,6 +191,22 @@ class PersonaCognition : public Cognition {
     out.push_back({a, met ? greet : "Hi, I don't think we've met -- I'm " + A.p.first + ". " + hello + "!"});
     out.push_back({b, met ? "Hey " + A.p.first + "! Pretty good -- I've been " + doing(B) + "."
                           : "Nice to meet you, " + A.p.first + ". I'm " + B.p.first + ". I've been " + doing(B) + "."});
+    if (v.caseTopic(a, b, news)) {
+      // A murder: what each of them saw (or claims to have seen).
+      if (news >= 0 && v.news()[news].name.rfind("the murder of ", 0) == 0) {
+        out.back().second = "Hey " + A.p.first + ". Is something wrong? You look pale.";
+        out.push_back({a, "Did you hear? " + v.news()[news].text});
+        out.push_back({b, "What? That's horrible. I had no idea."});
+      }
+      std::string mine = v.caseLine(a, b), theirs = v.caseLine(b, a);
+      if (!mine.empty()) out.push_back({a, mine});
+      out.push_back({b, !theirs.empty() && news < 0 ? theirs
+                         : rng.random() < 0.5 ? "I don't know what to think. Who would do something like that?"
+                                              : "That's terrifying. I'm going to keep my eyes open."});
+      out.push_back({a, "Stay safe, " + B.p.first + ". I'll see you at the meeting."});
+      out.push_back({b, "You too, " + A.p.first + "."});
+      return out;
+    }
     if (news >= 0) {
       const News& n = v.news()[news];
       if (n.origin == a && n.invite) {
@@ -258,6 +274,10 @@ class PersonaCognition : public Cognition {
       if (n.news >= 0) newsSeen[n.news]++;
     }
     std::vector<std::string> out;
+    if (auto sus = v.suspects(i); !sus.empty() && sus.front().second >= 1.0f && i != v.mystery().killer) {
+      const Persona& s = v.agents()[sus.front().first].p;
+      out.push_back("I keep coming back to " + s.name + ". I can't shake the feeling " + s.first + " had something to do with it.");
+    }
     int best = -1, bestN = 0;
     for (auto& [p, c] : people)
       if (c > bestN) {
@@ -413,6 +433,7 @@ class LlmCognition : public Cognition {
                          B.p.learned + ") is " + doing(B) + ". They run into each other.\nWhat " + A.p.first +
                          " remembers about " + B.p.first + ":\n" + memories(v, a, B.p.name, 5) +
                          (news >= 0 ? A.p.first + " wants to mention: " + v.news()[news].text + "\n" : "") +
+                         caseContext(v, a, b, news) +
                          "Write their short conversation (4-8 lines), one line per turn, formatted exactly as "
                          "'Name: utterance', using the names " + A.p.first + " and " + B.p.first + ".";
     auto r = ask(v, a, prompt, 500, 0.9);
@@ -426,6 +447,63 @@ class LlmCognition : public Cognition {
       out.push_back({speaker, text});
     }
     return out.size() >= 2 ? out : fallback_.converse(v, a, b, news, rng);
+  }
+
+  // What a murder adds to a conversation prompt: what each of them knows,
+  // and, for the killer, the secret they're keeping.
+  static std::string caseContext(Ville& v, int a, int b, int news) {
+    if (!v.caseTopic(a, b, news)) return "";
+    const Agent& A = v.agents()[a];
+    const Agent& B = v.agents()[b];
+    std::string out = "They are both shaken by a murder in town and talk about it.\n";
+    std::string la = v.caseLine(a, b), lb = v.caseLine(b, a);
+    if (!la.empty()) out += A.p.first + " would say: " + la + "\n";
+    if (!lb.empty() && news < 0) out += B.p.first + " would say: " + lb + "\n";
+    int k = v.mystery().killer;
+    if (k == a || k == b) {
+      const Agent& K = v.agents()[k];
+      int s = v.mystery().scapegoat;
+      out += "Secretly, " + K.p.first + " is the killer. " + K.p.first + " never admits it, claims to have been home, " +
+             (s >= 0 ? "and steers suspicion toward " + v.agents()[s].p.name + ".\n" : "and stays calm.\n");
+    }
+    return out;
+  }
+
+  int accuse(Ville& v, int voter, const std::vector<int>& candidates, sl::SeededRandom& rng) override {
+    if (!live(v, voter)) return fallback_.accuse(v, voter, candidates, rng);
+    const Agent& a = v.agents()[voter];
+    std::string known;
+    for (auto& [s, score] : v.suspects(voter)) {
+      for (auto& e : v.evidence(voter, s)) known += "- " + e + "\n";
+      if (known.size() > 600) break;
+    }
+    std::string names;
+    for (int c : candidates)
+      if (c != voter) names += (names.empty() ? "" : ", ") + v.agents()[c].p.name;
+    const CaseState& cs = v.mystery();
+    std::string victim = cs.crimes.empty() ? "someone" : v.agents()[cs.crimes.back().victim].p.name;
+    std::string secret = voter == cs.killer && cs.scapegoat >= 0
+                             ? "Secretly, you are the killer. Vote for someone else -- " + v.agents()[cs.scapegoat].p.name +
+                                   " is the easiest to blame.\n"
+                             : "";
+    std::string prompt = "It is " + v.clockText() + ". The town is meeting about the murder of " + victim + ".\n" + secret +
+                         "What " + a.p.first + " knows:\n" + (known.empty() ? "- nothing concrete\n" : known) +
+                         "Memories:\n" + memories(v, voter, "murder " + victim, 6) +
+                         "Who does " + a.p.first + " vote to arrest? Choose one of: " + names +
+                         ". Answer with just the full name, or 'nobody' if there's no real evidence.";
+    auto r = ask(v, voter, prompt, 40, 0.3);
+    std::string reply = lower(r.text);
+    if (reply.find("nobody") != std::string::npos) return -1;
+    int pick = -1;
+    size_t pickAt = std::string::npos;
+    for (int c : candidates) {
+      if (c == voter) continue;
+      size_t at = reply.find(lower(v.agents()[c].p.name));
+      if (at == std::string::npos) at = reply.find(lower(v.agents()[c].p.first));
+      if (at != std::string::npos && at < pickAt) pickAt = at, pick = c;
+    }
+    if (pick >= 0) return pick;
+    return r.error.empty() ? -1 : fallback_.accuse(v, voter, candidates, rng);  // a failed call votes on the evidence
   }
 
   std::vector<std::string> reflect(Ville& v, int i, sl::SeededRandom& rng) override {

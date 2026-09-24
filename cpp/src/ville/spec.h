@@ -144,6 +144,29 @@ struct FreeTimeSpec {
   bool social = false;  // weighted up for sociable residents
 };
 
+// A mystery played out inside the town: one resident secretly kills
+// another; the town finds the body, shares what it saw, and votes at a
+// meeting. A wrong arrest and the killer strikes again.
+//
+//   mystery "Murder at Hobbs Cafe" {
+//     killer: random                 // or a resident's name
+//     victim: "Isabella Rodriguez"   // or random
+//     at: "Hobbs Cafe"               // where the first victim is kept late
+//     day: 0                         // day index of the first crime
+//     time: 20.5                     // hour of the crime (8:30 pm)
+//     meeting: "Town Hall"           // where the town meets and votes
+//     meeting_hours: 18..19
+//     rounds: 3                      // meetings before the killer wins
+//   }
+struct MysterySpec {
+  bool on = false;
+  std::string name = "Murder";
+  std::string killer = "random", victim = "random", at, meeting = "Town Hall";
+  int day = 0, minute = 20 * 60 + 30;
+  int meetingStart = 18 * 60, meetingEnd = 19 * 60;
+  int rounds = 3;
+};
+
 struct BehaviorSpec {
   std::vector<std::string> imports;
   std::string name = "Behavior";
@@ -156,6 +179,7 @@ struct BehaviorSpec {
   std::vector<ActivitySpec> activities;
   std::vector<std::pair<std::string, std::string>> emoji;  // keyword -> emoji
   std::vector<std::pair<std::string, float>> importance;   // keyword -> 1-10
+  MysterySpec mystery;
 };
 
 struct TownSpec {
