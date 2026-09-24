@@ -14,7 +14,7 @@ namespace app {
 // (syntax errors and likely typos, with one-click fixes).
 struct ScriptView {
   TextEditor editor;
-  std::string kind;
+  std::string kind, dir;  // file kind, and its folder (where imports resolve)
   std::string synced;       // the text the editor holds (mirrors Asset::text)
   size_t undoIndex = 0;
   bool dark = true;
@@ -32,6 +32,7 @@ namespace {
 std::shared_ptr<ScriptView> makeView(EditorState& ed, const Asset& a) {
   auto v = std::make_shared<ScriptView>();
   v->kind = a.kind;
+  v->dir = a.path.parent_path().string();
   v->dark = ed.dark;
   v->editor.SetLanguage(slLanguage());
   v->editor.SetPalette(slPalette(ed.dark));
@@ -69,7 +70,7 @@ std::shared_ptr<ScriptView> makeView(EditorState& ed, const Asset& a) {
 
 void runChecks(EditorState& ed, ScriptView& v) {
   v.checked = v.synced;
-  checkSource(v.synced, v.kind, v.error, v.errorLine);
+  checkSource(v.synced, v.kind, v.dir, v.error, v.errorLine);
   v.typos = findTypos(v.synced, v.kind);
   v.editor.ClearMarkers();
   if (!v.error.empty())
@@ -154,7 +155,8 @@ void drawProject(EditorState& ed) {
   ImGui::SameLine();
   float right = 90 + 70 + 70 + 110 + 30;
   ImGui::SameLine(std::max(ImGui::GetCursorPosX() + 10, ImGui::GetWindowWidth() - right));
-  if (ImGui::SmallButton("+ New Script")) newScript(ed);
+  if (ImGui::SmallButton("+ New Town")) newScript(ed);
+  ImGui::SetItemTooltip("An environment and a behavior file that import smallville");
   ImGui::SameLine();
   if (ImGui::SmallButton("Refresh")) refreshAssets(ed);
   ImGui::SameLine();
@@ -183,13 +185,13 @@ void drawProject(EditorState& ed) {
   static const Shelf kShelves[] = {
       {"environment", "Towns", "environment files: buildings, residents, relationships, events. Double-click to run."},
       {"behavior", "Behaviors", "behavior files: social rules, routines, activities. A town names the one it uses."},
-      {"game", "Games", "SocialLang game scripts"},
+      {"library", "Library", "lib/: the defaults a file starts from with `import smallville`"},
   };
   for (const Shelf& shelf : kShelves) {
   int shown = 0;
   for (size_t i = 0; i < ed.assets.size(); ++i) {
     Asset& a = ed.assets[i];
-    if (a.kind != shelf.kind) continue;
+    if (a.library ? std::string(shelf.kind) != "library" : a.kind != shelf.kind) continue;
     if (shown == 0) {
       ImGui::PushFont(ed.fonts.bold, 0.0f);
       ImGui::TextUnformatted(shelf.title);

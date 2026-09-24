@@ -25,7 +25,8 @@ struct Asset {
   std::filesystem::path path;
   std::string text;   // editor buffer
   std::string saved;  // last saved / loaded contents
-  std::string kind;   // "environment", "behavior", or "game"
+  std::string kind;   // "environment" or "behavior"
+  bool library = false;  // in games/lib: imported by other files
   std::string detail; // environment files: "25 residents, oakhill.behavior.sl"
   bool scriptOpen = false;
   bool focusScript = false;

@@ -19,33 +19,26 @@ namespace fs = std::filesystem;
 
 namespace {
 
-const char* kNewScriptTemplate = R"(// A new SocialLang game. The language reference is DESIGN.md in the repo.
-sim NewGame {
-  agents: 4
+// A new town: an environment and a behavior file, both starting from the
+// smallville library. NAME is replaced with the town's name.
+const char* kNewEnvTemplate = R"(// NAME: Smallville's defaults, plus whatever you add below.
+//   building "Hobbs Cafe" { floor: "#E8C07A" }   changes one building
+//   resident "Ava Novak" { ... }                  adds a resident
+//   remove building "Johnson Park"                drops one
+import smallville
 
-  role Villager {
-    team: "town"
-    memory: recent(5)
-    sees: none
-    count: remainder
-  }
+environment NAME {
+  behavior: "NAME.behavior.sl"
+}
+)";
 
-  phase Day {
-    for p in alive() {
-      let mood = ask_choice(p, "How is your day going?", ["great", "fine", "rough"])
-      broadcast(p, p.seat + " says their day is " + mood + ".")
-    }
-  }
+const char* kNewBehaviorTemplate = R"(// How NAME's residents behave: Smallville's defaults, plus what you add.
+//   rules { chattiness: 2 }                        the whole town
+//   rules student { strangers_talk: false }        everyone on one routine
+//   rules "Klaus Mueller" { vision: 8 }            one resident
+import smallville
 
-  win_condition {
-    if round >= 5 { return "done" }
-  }
-
-  loop {
-    run Day
-    let winner = check_win()
-    if winner != null { return winner }
-  }
+behavior NAME {
 }
 )";
 
@@ -171,21 +164,27 @@ void notify(EditorState& ed, const std::string& msg) {
 void refreshAssets(EditorState& ed) {
   std::vector<Asset> next;
   std::error_code ec;
-  if (fs::exists(ed.assetsDir, ec)) {
-    for (auto& entry : fs::directory_iterator(ed.assetsDir, ec)) {
+  // The folder's towns and behaviors, then the libraries they import (lib/).
+  for (bool lib : {false, true}) {
+    fs::path dir = lib ? ed.assetsDir / "lib" : ed.assetsDir;
+    if (!fs::exists(dir, ec)) continue;
+    for (auto& entry : fs::directory_iterator(dir, ec)) {
       if (entry.path().extension() != ".sl") continue;
       Asset a;
-      a.name = entry.path().filename().string();
+      a.name = (lib ? "lib/" : "") + entry.path().filename().string();
       a.path = entry.path();
+      a.library = lib;
       a.saved = readFile(a.path);
       a.text = a.saved;
       std::string k = ville::slFileKind(a.saved);
-      a.kind = k == "environment" || k == "behavior" ? k : "game";
+      if (k != "environment" && k != "behavior") continue;  // only the two kinds of file
+      a.kind = k;
       if (a.kind == "environment") {
         try {
-          auto env = ville::parseEnvironment(a.saved);
+          auto env = ville::parseEnvironment(a.saved, dir.string());
           size_t n = env.residents.size() + static_cast<size_t>(std::max(0, env.generate.residents));
           a.detail = std::to_string(n) + " residents, " + (env.behavior.empty() ? "no behavior file" : env.behavior);
+          if (!env.imports.empty()) a.detail += ", imports " + env.imports[0];
         } catch (const std::exception& e) {
           a.detail = e.what();
         }
@@ -201,8 +200,12 @@ void refreshAssets(EditorState& ed) {
       next.push_back(std::move(a));
     }
   }
-  // Towns lead, then their behavior files, then games; alphabetical within.
-  auto rank = [](const Asset& a) { return a.kind == "environment" ? 0 : a.kind == "behavior" ? 1 : 2; };
+  // Towns lead (smallville first), then behaviors, then the library.
+  auto rank = [](const Asset& a) {
+    if (a.library) return 3;
+    if (a.name == "smallville.env.sl") return 0;
+    return a.kind == "environment" ? 1 : 2;
+  };
   std::sort(next.begin(), next.end(), [&](const Asset& x, const Asset& y) {
     return rank(x) != rank(y) ? rank(x) < rank(y) : x.name < y.name;
   });
@@ -227,7 +230,7 @@ void loadAsset(EditorState& ed, int index) {
     for (size_t i = 0; i < ed.assets.size(); ++i) {
       if (ed.assets[i].kind != "environment") continue;
       try {
-        auto env = ville::parseEnvironment(ed.assets[i].saved);
+        auto env = ville::parseEnvironment(ed.assets[i].saved, ed.assets[i].path.parent_path().string());
         if (env.behavior == a.name) {
           loadTown(ed, static_cast<int>(i));
           return;
@@ -325,21 +328,27 @@ bool saveAsset(EditorState& ed, int index) {
 void newScript(EditorState& ed) {
   std::error_code ec;
   fs::create_directories(ed.assetsDir, ec);
-  fs::path p;
-  for (int i = 0;; ++i) {
-    p = ed.assetsDir / (i == 0 ? "NewGame.sl" : "NewGame" + std::to_string(i) + ".sl");
-    if (!fs::exists(p)) break;
+  std::string name;
+  for (int i = 1;; ++i) {
+    name = i == 1 ? "NewTown" : "NewTown" + std::to_string(i);
+    if (!fs::exists(ed.assetsDir / (name + ".env.sl"), ec) && !fs::exists(ed.assetsDir / (name + ".behavior.sl"), ec)) break;
   }
-  std::ofstream(p, std::ios::binary) << kNewScriptTemplate;
+  auto fill = [&](std::string t) {
+    for (size_t at; (at = t.find("NAME")) != std::string::npos;) t.replace(at, 4, name);
+    return t;
+  };
+  fs::path env = ed.assetsDir / (name + ".env.sl"), beh = ed.assetsDir / (name + ".behavior.sl");
+  std::ofstream(env, std::ios::binary) << fill(kNewEnvTemplate);
+  std::ofstream(beh, std::ios::binary) << fill(kNewBehaviorTemplate);
   refreshAssets(ed);
   for (size_t i = 0; i < ed.assets.size(); ++i) {
-    if (ed.assets[i].path == p) {
-      ed.assets[i].scriptOpen = true;
+    if (ed.assets[i].path == env || ed.assets[i].path == beh) ed.assets[i].scriptOpen = true;
+    if (ed.assets[i].path == env) {
       ed.assets[i].focusScript = true;
       ed.sel = {SelKind::Asset, static_cast<int>(i)};
     }
   }
-  notify(ed, "Created " + p.filename().string());
+  notify(ed, "Created " + name + ".env.sl and " + name + ".behavior.sl");
 }
 
 void initEditor(EditorState& ed) {
@@ -607,7 +616,7 @@ namespace {
 void drawMenuBar(EditorState& ed) {
   if (!ImGui::BeginMainMenuBar()) return;
   if (ImGui::BeginMenu("File")) {
-    if (ImGui::MenuItem("New Script", "Ctrl+N")) newScript(ed);
+    if (ImGui::MenuItem("New Town", "Ctrl+N")) newScript(ed);
     if (ImGui::MenuItem("Save", "Ctrl+S", false, ed.focusedScript >= 0)) saveAsset(ed, ed.focusedScript);
     if (ImGui::MenuItem("Save All")) {
       for (size_t i = 0; i < ed.assets.size(); ++i)
@@ -684,11 +693,6 @@ void drawToolbar(EditorState& ed) {
       ImGui::TextDisabled("Towns");
       for (size_t i = 0; i < ed.assets.size(); ++i)
         if (ed.assets[i].kind == "environment" && ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.townAsset))
-          loadAsset(ed, (int)i);
-      ImGui::Separator();
-      ImGui::TextDisabled("Games");
-      for (size_t i = 0; i < ed.assets.size(); ++i)
-        if (ed.assets[i].kind == "game" && ImGui::Selectable(ed.assets[i].name.c_str(), (int)i == ed.activeAsset))
           loadAsset(ed, (int)i);
       ImGui::EndCombo();
     }
