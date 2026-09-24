@@ -90,11 +90,11 @@ RunResult runOnce(const std::shared_ptr<const Program>& program, const Config& c
 
 }  // namespace
 
-// sl_run --town FILE.env.sl [--days N] [--residents N] [--serial] [--log]:
+// sl_run --town FILE.env.sl [--days N] [--residents N] [--serial] [--log] [--save]:
 // run a town (an environment file + the behavior file it names), headless.
 int runTown(int argc, char** argv) {
   ville::VilleOptions o;
-  bool log = false;
+  bool log = false, save = false;
   std::string path;
   int days = -1, residents = -1;
   for (int i = 1; i < argc; ++i) {
@@ -104,9 +104,15 @@ int runTown(int argc, char** argv) {
     else if (a == "--residents" && i + 1 < argc) residents = std::atoi(argv[++i]);
     else if (a == "--serial") o.parallel = false;
     else if (a == "--log") log = true;
+    else if (a == "--save") save = true;
   }
   try {
     o.spec = ville::TownSpec::load(path);
+    if (save) {  // rewrite both files canonically (imports: only what differs), then stop
+      o.spec.save();
+      std::printf("rewrote %s and %s\n", o.spec.envPath.c_str(), o.spec.behaviorPath.c_str());
+      return 0;
+    }
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());
     return 1;

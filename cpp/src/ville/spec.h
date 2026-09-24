@@ -96,7 +96,8 @@ struct GenerateSpec {
 };
 
 struct EnvironmentSpec {
-  std::string name = "Town", behavior;  // behavior: file name, next to this one
+  std::vector<std::string> imports;     // libraries this file starts from
+  std::string name = "Town", behavior;  // behavior: file name, next to this one (or in lib/)
   int startHour = 6, days = 2;
   uint32_t seed = 1;
   std::string startDate = "Monday, February 13, 2023";
@@ -144,6 +145,7 @@ struct FreeTimeSpec {
 };
 
 struct BehaviorSpec {
+  std::vector<std::string> imports;
   std::string name = "Behavior";
   SocialRules rules;
   std::map<std::string, SocialRules> groupRules;     // keyed by routine
@@ -173,8 +175,12 @@ struct TownSpec {
   bool save() const;
 };
 
-EnvironmentSpec parseEnvironment(const std::string& source);
-BehaviorSpec parseBehavior(const std::string& source);
+// `dir` is the file's folder, where `import name` looks for lib/name.env.sl
+// (then name.env.sl); likewise .behavior.sl for behavior files.
+EnvironmentSpec parseEnvironment(const std::string& source, const std::string& dir = "");
+BehaviorSpec parseBehavior(const std::string& source, const std::string& dir = "");
+// The file an import resolves to, or "" if there is none.
+std::string findLibrary(const std::string& dir, const std::string& name, const std::string& ext);
 std::string writeEnvironment(const EnvironmentSpec& e);
 std::string writeBehavior(const BehaviorSpec& b);
 // "environment" / "behavior" / "sim" / "" -- what kind of .sl a file is.

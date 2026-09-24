@@ -94,7 +94,9 @@ void writeLook(std::ostringstream& o, const BuildingSpec& b, const std::string& 
   if (!b.parkObjects.empty()) o << ind << "objects: " << list(b.parkObjects) << "\n";
   if (b.customRooms)
     for (auto& r : b.rooms) o << ind << "room " << quote(r.name) << " { objects: " << list(r.objects) << " }\n";
-  if (b.hasBedroom) o << ind << "bedroom { objects: " << list(b.bedroom.objects) << " }\n";
+  if (b.hasBedroom)
+    o << ind << "bedroom " << (b.bedroom.name == "bedroom" ? "" : quote(b.bedroom.name) + " ") << "{ objects: "
+      << list(b.bedroom.objects) << " }\n";
 }
 
 bool lookIsEmpty(const BuildingSpec& b) {
@@ -217,12 +219,74 @@ void writeRoutineLine(std::ostringstream& o, const RoutineEntry& e) {
 
 }  // namespace
 
+// ---------------- imports
+
+namespace {
+
+std::string readText(const std::string& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) throw sl::ParseError("cannot open " + path);
+  std::stringstream ss;
+  ss << in.rdbuf();
+  std::string s = ss.str();
+  s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
+  return s;
+}
+
+// The file's tree with its imports merged underneath it.
+CNode loadTree(const std::string& source, const std::string& dir, const std::string& ext, int depth) {
+  CNode root = parseConfig(source);
+  if (root.imports.empty()) return root;
+  if (depth > 8) throw sl::ParseError("line 1: imports nest too deeply (a library importing itself?)");
+  CNode merged;
+  bool first = true;
+  for (auto& name : root.imports) {
+    std::string path = findLibrary(dir, name, ext);
+    if (path.empty()) throw sl::ParseError("line 1: no library '" + name + "' (looked for lib/" + name + ext + ")");
+    CNode lib;
+    try {
+      lib = loadTree(readText(path), fs::path(path).parent_path().string(), ext, depth + 1);
+    } catch (const sl::ParseError& e) {
+      throw sl::ParseError(fs::path(path).filename().string() + ", " + e.what());
+    }
+    if (first) merged = std::move(lib), first = false;
+    else mergeConfig(merged, lib);
+  }
+  if (merged.kind != root.kind)
+    throw sl::ParseError("line 1: '" + root.imports[0] + "' is " + (merged.kind.empty() ? "empty" : "a " + merged.kind + " library"));
+  std::vector<std::string> imports = root.imports;
+  mergeConfig(merged, root);
+  merged.imports = imports;
+  return merged;
+}
+
+// The imports' tree alone (what a file's own text is a diff against).
+CNode importsTree(const std::vector<std::string>& imports, const std::string& dir, const std::string& kind, const std::string& ext) {
+  std::string src;
+  for (auto& i : imports) src += "import " + i + "\n";
+  src += kind + " _ { }\n";
+  CNode t = loadTree(src, dir, ext, 0);
+  return t;
+}
+
+}  // namespace
+
+std::string findLibrary(const std::string& dir, const std::string& name, const std::string& ext) {
+  std::error_code ec;
+  fs::path d = dir.empty() ? fs::path(".") : fs::path(dir);
+  std::string file = name.size() > 3 && name.ends_with(".sl") ? name : name + ext;
+  for (fs::path p : {d / "lib" / file, d / file, d.parent_path() / "lib" / file})
+    if (fs::exists(p, ec)) return p.string();
+  return "";
+}
+
 // ---------------- environment
 
-EnvironmentSpec parseEnvironment(const std::string& source) {
-  CNode root = parseConfig(source);
+EnvironmentSpec parseEnvironment(const std::string& source, const std::string& dir) {
+  CNode root = loadTree(source, dir, ".env.sl", 0);
   if (root.kind != "environment") throw sl::ParseError("line 1: expected 'environment Name { ... }'");
   EnvironmentSpec e;
+  e.imports = root.imports;
   e.name = root.arg(0, "Town");
   e.behavior = root.str("behavior");
   e.startHour = static_cast<int>(root.num("start_hour", 6));
@@ -388,10 +452,11 @@ std::string writeEnvironment(const EnvironmentSpec& e) {
 
 // ---------------- behavior
 
-BehaviorSpec parseBehavior(const std::string& source) {
-  CNode root = parseConfig(source);
+BehaviorSpec parseBehavior(const std::string& source, const std::string& dir) {
+  CNode root = loadTree(source, dir, ".behavior.sl", 0);
   if (root.kind != "behavior") throw sl::ParseError("line 1: expected 'behavior Name { ... }'");
   BehaviorSpec b;
+  b.imports = root.imports;
   b.name = root.arg(0, "Behavior");
   // Town rules first, so group / resident rules start from them.
   for (auto& c : root.children)
@@ -552,31 +617,24 @@ BuildingSpec* TownSpec::findBuilding(const std::string& name) {
   return nullptr;
 }
 
-namespace {
-std::string readText(const std::string& path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in) throw sl::ParseError("cannot open " + path);
-  std::stringstream ss;
-  ss << in.rdbuf();
-  std::string s = ss.str();
-  s.erase(std::remove(s.begin(), s.end(), '\r'), s.end());
-  return s;
-}
-}  // namespace
-
 TownSpec TownSpec::load(const std::string& envPath) {
   TownSpec t;
   t.envPath = envPath;
   std::string file = fs::path(envPath).filename().string();
   try {
-    t.env = parseEnvironment(readText(envPath));
+    t.env = parseEnvironment(readText(envPath), fs::path(envPath).parent_path().string());
   } catch (const sl::ParseError& e) {
     throw sl::ParseError(file + ", " + e.what());
   }
   if (!t.env.behavior.empty()) {
-    t.behaviorPath = (fs::path(envPath).parent_path() / t.env.behavior).string();
+    // Next to the environment file, else in lib/ (a library's own behaviors).
+    fs::path dir = fs::path(envPath).parent_path();
+    std::error_code ec;
+    t.behaviorPath = (dir / t.env.behavior).string();
+    if (!fs::exists(t.behaviorPath, ec) && fs::exists(dir / "lib" / t.env.behavior, ec))
+      t.behaviorPath = (dir / "lib" / t.env.behavior).string();
     try {
-      t.behavior = parseBehavior(readText(t.behaviorPath));
+      t.behavior = parseBehavior(readText(t.behaviorPath), fs::path(t.behaviorPath).parent_path().string());
     } catch (const sl::ParseError& e) {
       throw sl::ParseError(t.env.behavior + ", " + e.what());
     }
@@ -584,16 +642,32 @@ TownSpec TownSpec::load(const std::string& envPath) {
   return t;
 }
 
+// A file that imports a library is written as its difference from it, so it
+// keeps saying `import smallville` plus only what it changes.
+namespace {
+std::string withImports(const std::string& full, const std::vector<std::string>& imports, const std::string& path,
+                        const std::string& kind, const std::string& ext) {
+  if (imports.empty()) return full;
+  std::string dir = fs::path(path).parent_path().string();
+  CNode base = importsTree(imports, dir, kind, ext);
+  CNode d = diffConfig(base, parseConfig(full));
+  d.imports = imports;
+  return writeConfig(d);
+}
+}  // namespace
+
 bool TownSpec::save() const {
   bool ok = true;
   if (!envPath.empty()) {
+    std::string text = withImports(writeEnvironment(env), env.imports, envPath, "environment", ".env.sl");
     std::ofstream out(envPath, std::ios::binary);
-    out << writeEnvironment(env);
+    out << text;
     ok = ok && static_cast<bool>(out);
   }
   if (!behaviorPath.empty()) {
+    std::string text = withImports(writeBehavior(behavior), behavior.imports, behaviorPath, "behavior", ".behavior.sl");
     std::ofstream out(behaviorPath, std::ios::binary);
-    out << writeBehavior(behavior);
+    out << text;
     ok = ok && static_cast<bool>(out);
   }
   return ok;
