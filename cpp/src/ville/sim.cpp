@@ -355,7 +355,7 @@ void Ville::startTask(int i, int t) {
   } else if (sector >= 0 && !world_.sectors[sector].arenas.empty()) {
     int arena = world_.sectors[sector].arenas[a.rngState % world_.sectors[sector].arenas.size()];
     std::tie(tx, ty) = world_.freeTileIn(arena, a.rngState + static_cast<uint32_t>(step_));
-    a.addressText = "the Ville:" + world_.sectors[sector].name + ":" + world_.arenas[arena].name;
+    a.addressText = world_.name + ":" + world_.sectors[sector].name + ":" + world_.arenas[arena].name;
   } else {
     tx = a.x;
     ty = a.y;

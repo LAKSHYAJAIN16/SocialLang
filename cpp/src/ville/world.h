@@ -53,6 +53,8 @@ class World {
   // Lays out the environment's buildings (and generated ones) on a street grid.
   void generate(const TownSpec& spec);
 
+  std::string name = "Town";  // the environment's name, first part of every address
+
   int width() const { return w_; }
   int height() const { return h_; }
   Tile tile(int x, int y) const { return tiles_[y * w_ + x]; }
@@ -83,7 +85,7 @@ class World {
   int findArena(int sector, const std::string& name) const;
   // First object in the sector whose name contains `keyword`.
   int findObject(int sector, const std::string& keyword) const;
-  std::string address(int object) const;  // "the Ville:Hobbs Cafe:cafe:coffee machine"
+  std::string address(int object) const;  // "Smallville:Hobbs Cafe:cafe:coffee machine"
 
  private:
   int w_ = 0, h_ = 0;

@@ -194,6 +194,7 @@ void World::park(int sectorId, uint32_t seed, const std::vector<std::string>& th
 }
 
 void World::generate(const TownSpec& spec) {
+  name = spec.env.name;
   sectors.clear();
   arenas.clear();
   objects.clear();
@@ -302,7 +303,7 @@ int World::findObject(int sector, const std::string& keyword) const {
 std::string World::address(int object) const {
   const GameObject& o = objects[object];
   const Arena& a = arenas[o.arena];
-  return "the Ville:" + sectors[a.sector].name + ":" + a.name + ":" + o.name;
+  return name + ":" + sectors[a.sector].name + ":" + a.name + ":" + o.name;
 }
 
 std::pair<int, int> World::standTileFor(int object) const {
