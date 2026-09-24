@@ -7,9 +7,9 @@ Electron version in `sandbox/`.
 
 <img src="resources/icon.png" width="64" alt="SocialSandbox logo">
 
-## Towns: two .sl files
+## Towns: a folder with two .sl files
 
-A town is two SocialLang files in `games/`:
+A town is a folder, `games/NAME/`, holding two SocialLang files:
 
 - **`NAME.env.sl`: the environment.** Building types (rooms, furniture,
   colors, size), the buildings, the residents (traits, background, routine,
@@ -24,14 +24,16 @@ Both usually start from the **smallville library** in `games/lib/`:
 ```
 import smallville
 environment MyTown {
-  behavior: "mytown.behavior.sl"
   building "Hobbs Cafe" { floor: "#E8C07A" }   // merges into the library's
   remove building "Johnson Park"               // drops one
 }
 ```
 
-An import is looked up as `lib/NAME.env.sl` (or `.behavior.sl`) next to the
-file, then next to it, then in `../lib/`. Libraries can import libraries.
+The environment file uses the behavior file in its own folder
+(`NAME.behavior.sl`, or the only one there); `behavior: "file.behavior.sl"`
+still picks one explicitly. An import is looked up as `lib/NAME.env.sl` (or
+`.behavior.sl`) next to the file, then in `../lib/` (where a town folder's
+files find `games/lib/`), then next to the file. Libraries can import libraries.
 Merging: fields replace, nodes with the same kind and name merge, routine and
 activity bodies replace wholesale, other line entries (emoji, importance, free
 time) merge by their first value, and `remove kind "name"` drops a node. When
@@ -39,9 +41,9 @@ the app saves a file that imports a library, it writes only the differences
 (`diffConfig`), so the file stays short. Comments in a file the app rewrites
 are not kept.
 
-`smallville.env.sl` is the library as is. `riverside.env.sl` grows it to 1,000
-generated residents. **+ New Town** in the Scenarios panel makes an
-environment and a behavior file that import smallville.
+`games/smallville/` is the library as is. `games/riverside/` grows it to 1,000
+generated residents. **+ New Town** in the Scenarios panel makes a town
+folder with an environment and a behavior file that import smallville.
 
 Settings have scopes, and the most specific one wins:
 
@@ -103,7 +105,7 @@ files from PowerShell or cmd. Git Bash's environment breaks MSVC linking.
 | **Scene** | The world in 2D. Drag or right-drag to pan, scroll to zoom, **F** frames the selection. Agents turn team-colored once their role is revealed and show an ✕ when eliminated. Conversation lines fade over a few rounds. The timeline scrubs back through rounds. |
 | **Inspector** | Components for the selection: an agent's Transform, Agent, Persona, Plan, and Recent Activity; a location's occupants; the sim's seed and provider stats; a script's source. |
 | **Console** | The run's log, with per-kind toggles (Talk, Town, Reflect, Plans, Asks, Print, Errors) and search. Clicking a line selects its author. |
-| **Scenarios** | The games folder's environment and behavior files, shelved as Towns, Behaviors, and Library (`lib/`). Double-click a town to run it. Right-click and choose *Edit Script* to open a file in a tab beside the World view. **+ New Town** starts one from smallville. |
+| **Scenarios** | Like Unity's Project window: one folder per town, plus the library (`lib/`). Double-click a town's folder to open it and see its environment and behavior files (breadcrumb or Backspace to go back); double-click either file, **Run Town**, or right-click the folder to run it. Right-click a file and choose *Edit Script* to open it in a tab beside the World view. **+ New Town** makes a new town folder from smallville. |
 | **Rules** | A town's social rules for the whole town, a group, or one resident. Changes apply mid-run and save to the behavior file. |
 
 **Script tabs** highlight SocialLang syntax. Ctrl+Space (or just typing)

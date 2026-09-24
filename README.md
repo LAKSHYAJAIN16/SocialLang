@@ -4,10 +4,10 @@
 
 Everything runs inside one setting: **smallville**, a town of residents who
 wake up, plan their day, walk to work, run into each other, talk, remember,
-pass news along, and reflect. You describe a town with two kinds of `.sl`
-file, and anything else you want to happen is played out inside that town.
+pass news along, and reflect. A town is a folder, `games/NAME/`, holding two
+`.sl` files, and anything else you want to happen is played out inside that town.
 
-| File | What it says |
+| File in `games/NAME/` | What it says |
 |---|---|
 | `NAME.env.sl` (environment) | The world: building types, buildings, residents, relationships, events and news, and how many extra residents to generate. |
 | `NAME.behavior.sl` (behavior) | How residents behave: social rules, daily routines, meals and free time, how each activity breaks into timed tasks, emoji and importance. |
@@ -18,11 +18,10 @@ file, and anything else you want to happen is played out inside that town.
 only says what's different:
 
 ```
-// games/mytown.env.sl
+// games/mytown/mytown.env.sl
 import smallville
 
 environment MyTown {
-  behavior: "mytown.behavior.sl"
   days: 1
   building "Hobbs Cafe" { floor: "#E8C07A" }     // merges into the library's cafe
   resident "Ava Novak" {                          // a new resident
@@ -39,7 +38,7 @@ environment MyTown {
 ```
 
 ```
-// games/mytown.behavior.sl
+// games/mytown/mytown.behavior.sl
 import smallville
 
 behavior MyTown {
@@ -55,15 +54,16 @@ drops one. Settings are scoped, and the most specific one wins: `style { }` <
 `type cafe { }` < `building "Hobbs Cafe" { }` for how buildings look, and
 `rules { }` < `rules student { }` < `rules "Name" { }` for how people act.
 
-`games/smallville.env.sl` is the library as is (25 residents, including a
-Valentine's Day party that spreads by word of mouth). `games/riverside.env.sl`
-grows it to 1,000 generated residents.
+A town's environment file uses the behavior file in its own folder, so
+neither file has to name the other. `games/smallville/` is the library as is
+(25 residents, including a Valentine's Day party that spreads by word of
+mouth). `games/riverside/` grows it to 1,000 generated residents.
 
 ## The app
 
 `cpp/` is **SocialSandbox**, a native C++ editor laid out like Unity's: the
 town in the World view, a Town tree of places and residents, an Inspector,
-a Rules panel, the Scenarios panel (Towns, Behaviors, Library), and
+a Rules panel, the Scenarios panel (one folder per town, plus the library), and
 Play / Pause / Step. Script tabs highlight `.sl` syntax, suggest words as you
 type (Ctrl+Space), and flag typos like `rotuine` with a one-click fix. Editing
 a building, a resident, or the rules in the app writes back into the files,
@@ -76,8 +76,8 @@ Build and details: [cpp/README.md](cpp/README.md).
 
 ```
 cpp\build.bat                                   :: SocialSandbox.exe + sl_run.exe
-cpp\build\SocialSandbox.exe                     :: opens smallville.env.sl
-cpp\build\sl_run.exe --town games\riverside.env.sl   :: headless run
+cpp\build\SocialSandbox.exe                     :: opens smallville
+cpp\build\sl_run.exe --town games\riverside       :: headless run
 ```
 
 ## The original `sim` language
