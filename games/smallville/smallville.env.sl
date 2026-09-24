@@ -4,6 +4,5 @@
 import smallville
 
 environment Smallville {
-  behavior: "smallville.behavior.sl"
   days: 2
 }

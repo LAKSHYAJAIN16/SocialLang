@@ -3,7 +3,6 @@
 import smallville
 
 environment Riverside {
-  behavior: "smallville.behavior.sl"
   days: 1
   seed: 7
   generate {
